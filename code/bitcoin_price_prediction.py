@@ -11,6 +11,9 @@ import torch.nn as nn
 from torch import Tensor
 from torchsummary import summary
 
+
+import multiprocessing
+
 # Seaborn
 import seaborn as sns
 
@@ -60,11 +63,14 @@ lr = 0.5
 gamma = 0.95
 step_size = 1.0
 
-# %%
+
 # Device configuration
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+num_gpus = torch.cuda.device_count()
+num_cpus = max(multiprocessing.cpu_count() - 1, 1)
+# 计算 Optuna 的最大并行任务数
+n_parallel_trials = num_gpus + num_cpus
 
-# %%
 # font configuration
 font = {'family': 'Arial', 'weight': 'normal', 'size': 14}
 
@@ -72,35 +78,7 @@ plt.rc('font', **font)
 
 # %%
 # load the data
-data = pd.read_csv("../input/btcusdt/okex_btcusdt_kline_1m.csv")
-columns_dict = {'t': 'Unix_timestamp',
-                'o': 'Opening_price',
-                'h': 'Highest_price',
-                'l': 'Lowest_price',
-                'c': 'Closing_price',
-                'v': 'Volume_of_transactions'
-                }
-data = data.rename(columns=columns_dict)
-
-
-# show info of data
-if plot_data_process:
-    data.info()
-if plot_data_process:
-    data.head()
-# print last 5 lines of data
-if plot_data_process:
-    data.tail()
-
-
-# sort datapoints by timestamp
-data = data.sort_values('t', ignore_index=True)
-
-
-# converts format from unix to UTC+8
-data['t'] = pd.to_datetime(data['t'], unit='ms') + pd.Timedelta('08:00:00')
-data = data.rename(columns={'t': 'Timestamp'})
-
+data = pd.read_csv("../input/btcusdt/BTCUSDT-3m-2024-12.csv")
 
 def plot_correlation(data, title, figsize=(10, 5)):
     """Plots correlations between all columns in data
@@ -161,22 +139,13 @@ def plot_scaled_features(data, features_to_plot, scaler=None, xlabel="Time"):
 if plot_data_process:
     plot_correlation(data, title="Correlations Between Features in Minutes")
 
-
-# Finta needs specific columns' names to work
-data_finta = pd.DataFrame()
-data_finta['open'] = data['o']
-data_finta['high'] = data['h']
-data_finta['low'] = data['l']
-data_finta['close'] = data['c']
-data_finta['volume'] = data['v']
-
 # create data with all wanted features per minute
 data_min = data.copy()
 extra_features = ['TRIX', 'VWAP', 'MACD', 'EV_MACD', 'MOM', 'RSI', 'IFT_RSI', 'TR', 'ATR', 'BBWIDTH', 'DMI', 'ADX',
                   'STOCHRSI', 'MI', 'CHAIKIN', 'VZO', 'PZO', 'EFI', 'EBBP', 'BASP', 'BASPN', 'WTO', 'SQZMI', 'VFI',
                   'STC']
 both_columns_features = ["DMI", "EBBP", "BASP", "BASPN"]
-add_finta_feature(data_min, data_finta, extra_features, both_columns_features)
+add_finta_feature(data_min, extra_features, both_columns_features)
 
 
 # check correlation between all features including new ones in minutes form
@@ -208,7 +177,8 @@ data_min = data_min.reset_index(drop=True)
 start_hour = start_index // 60
 start_minute = start_index % 60
 # Drop Non-numeric columns
-data_min.drop(['Timestamp'], inplace=True, axis=1)
+data_min.drop(['open_time'], inplace=True, axis=1)
+data_min.drop(['close_time'], inplace=True, axis=1)
 
 # reorder columns by importance:
 new_columns_order = ['Closing_price', 'Volume_of_transactions', 'Opening_price', 'Highest_price', 'Lowest_price',

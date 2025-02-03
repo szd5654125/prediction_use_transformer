@@ -89,7 +89,7 @@ def get_batch(data, i, bptt_src, bptt_tgt, overlap):
     return source, target
 
 
-def add_finta_feature(data, data_finta, feature_names, both_columns_features):
+def add_finta_feature(data, feature_names, both_columns_features):
     """Adds new fanta features to data by their feature_name in feature_names
 
     Args:
@@ -101,7 +101,7 @@ def add_finta_feature(data, data_finta, feature_names, both_columns_features):
     """
     for feature_name in feature_names:
         feature_func = getattr(TA, feature_name)
-        finta_feature = feature_func(data_finta)
+        finta_feature = feature_func(data)
         if finta_feature.isna().all().all():
             print(f"Feature '{feature_name}' is empty after calculation.")
         if finta_feature.ndim > 1:

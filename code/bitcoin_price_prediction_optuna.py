@@ -19,6 +19,8 @@ import matplotlib.pyplot as plt
 import copy
 import sklearn.preprocessing as pp
 import multiprocessing
+import datetime
+import difflib
 
 from data_process import train_validation_test_split, normalize_data, betchify, get_batch, add_finta_feature
 from model import BTC_Transformer
@@ -29,7 +31,6 @@ from evaluation import evaluate
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 num_gpus = torch.cuda.device_count()
 num_cpus = max(multiprocessing.cpu_count() - 1, 1)
-print()
 # 计算 Optuna 的最大并行任务数
 n_parallel_trials = num_gpus + num_cpus
 
@@ -40,44 +41,28 @@ plt.rc('font', **font)
 
 
 # load the data
-data = pd.read_csv("../input/btcusdt/okex_btcusdt_kline_1m.csv")
-
-# Finta needs specific columns' names to work
-data_finta = pd.DataFrame()
-data_finta['open'] = data['o']
-data_finta['high'] = data['h']
-data_finta['low'] = data['l']
-data_finta['close'] = data['c']
-data_finta['volume'] = data['v']
-
-# show info of data
-data.info()
-
-
+data = pd.read_csv("../input/btcusdt/BTCUSDT-3m-2024-12.csv")
 # plot data processing statistics
 plot_data_process = True
-
-
-# sort datapoints by timestamp
-data = data.sort_values('t', ignore_index=True)
-
-
-# converts format from unix to UTC+8
-data['t'] = pd.to_datetime(data['t'], unit='ms') + pd.Timedelta('08:00:00')
-data = data.rename(columns={'t': 'Timestamp'})
-
 
 # create data with all wanted features per minute
 data_min = data.copy()
 
-extra_features = ['TRIX', 'VWAP', 'MACD', 'EV_MACD', 'MOM', 'RSI', 'IFT_RSI', 'TR', 'ATR', 'BBWIDTH', 'DMI', 'ADX',
+extra_features = ['SMA','TRIX', 'VWAP', 'MACD', 'EV_MACD', 'MOM', 'RSI', 'IFT_RSI', 'TR', 'ATR', 'BBWIDTH', 'DMI', 'ADX',
                   'STOCHRSI', 'MI', 'CHAIKIN', 'VZO', 'PZO', 'EFI', 'EBBP', 'BASP', 'BASPN', 'WTO', 'SQZMI', 'VFI',
                   'STC']
 both_columns_features = ["DMI", "EBBP", "BASP", "BASPN"]
 
 # 使用finta添加特征
-data_min = add_finta_feature(data_min, data_finta, extra_features, both_columns_features)
+data_min = add_finta_feature(data_min, extra_features, both_columns_features)
+# 获取当前时间
+current_time = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
 
+# 生成文件名并保存 CSV
+file_name = f"trend_data_{current_time}.csv"
+data_min.to_csv(file_name, index=False, encoding='utf-8')
+
+print(f"文件已保存为: {file_name}")
 # find the maximum index containing NaN
 last_nan_indices = data_min.apply(lambda col: col.index[col.isna()][-1] if col.isna().any() else -1)
 
@@ -95,11 +80,15 @@ data_min = data_min.iloc[start_index:, :]
 data_min = data_min.reset_index(drop=True)
 start_hour = start_index // 60
 start_minute = start_index % 60
-# Drop Non-numeric columns
-data_min.drop(['Timestamp'], inplace=True, axis=1)
+
+
+data_min.drop(['open_time'], inplace=True, axis=1)
+data_min.drop(['close_time'], inplace=True, axis=1)
+data_min.drop(['ignore'], inplace=True, axis=1)
 print(f"data_min shape: {data_min.shape}")
 # reorder columns by importance:
-new_columns_order = ['c', 'v', 'o', 'h', 'l', 'TRIX', 'VWAP', 'MACD', 'EV_MACD', 'MOM', 'RSI', 'IFT_RSI', 'TR', 'ATR',
+new_columns_order = ['close', 'volume', 'open', 'high', 'low', 'quote_volume', 'count', 'taker_buy_volume',
+                     'taker_buy_quote_volume', 'SMA', 'TRIX', 'VWAP', 'MACD', 'EV_MACD', 'MOM', 'RSI', 'IFT_RSI', 'TR', 'ATR',
                      'BBWIDTH', 'DMI_1', 'DMI_2', 'ADX', 'STOCHRSI', 'MI', 'CHAIKIN', 'VZO', 'PZO', 'EFI', 'EBBP_1',
                      'EBBP_2', 'BASP_1', 'BASP_2', 'BASPN_1', 'BASPN_2', 'WTO', 'SQZMI', 'VFI', 'STC']
 data_min = data_min[new_columns_order]
@@ -135,10 +124,10 @@ if plot_data_process:
     ax.set_xlabel("Time - Minutes From (UTC+8): 2021-01-01 {:02d}:{:02d}:00".format(start_hour, start_minute))     
     ax.set_ylabel("Closing Price [USD]")            
     ax.set_title("Closing Price Through Time")
-    ax.plot(train_time, train_df['c'], label='Training data')
+    ax.plot(train_time, train_df['close'], label='Training data')
     if val_df is not None:
-        ax.plot(val_time, val_df['c'], label='Validation data')
-    ax.plot(test_time, test_df['c'], label='Test data')
+        ax.plot(val_time, val_df['close'], label='Validation data')
+    ax.plot(test_time, test_df['close'], label='Test data')
     ax.grid()
     ax.legend(loc="best", fontsize=12) 
     plt.show()
@@ -314,7 +303,7 @@ def objective(trial):
     return val_loss
 
 
-predicted_feature = train_df.columns.get_loc('c')
+predicted_feature = train_df.columns.get_loc('close')
 
 sampler = optuna.samplers.TPESampler()
 
