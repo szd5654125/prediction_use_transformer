@@ -58,14 +58,14 @@ data_min = detect_trend(data_min)
 # 使用finta添加特征
 data_min = add_finta_feature(data_min, extra_features, both_columns_features)
 # 获取当前时间
-current_time = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+'''current_time = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
 # 生成文件名并保存 CSV
 file_name = f"trend_data_{current_time}.csv"
 data_min.to_csv(file_name, index=False, encoding='utf-8')
 print(f"文件已保存为: {file_name}")
 
 if plot_data_process:
-    print("原始数据行数：", data_min.shape[0])
+    print("原始数据行数：", data_min.shape[0])'''
 # 删除所有包含NA的行
 data_min = data_min.dropna().reset_index(drop=True)
 if plot_data_process:

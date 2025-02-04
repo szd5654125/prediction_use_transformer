@@ -30,6 +30,7 @@ import sklearn.preprocessing as pp
 from data_process import train_validation_test_split, normalize_data, betchify, get_batch, add_finta_feature
 from model import BTC_Transformer
 from evaluation import evaluate
+from set_target import detect_trend
 
 # %%
 # plot data processing statistics
@@ -50,7 +51,8 @@ overlap = 1
 num_encoder_layers = 4
 num_decoder_layers = 4
 periodic_features = 10
-out_features = 60  # must be greater or equal to (num_features + periodic_features)
+# out_features = 60  # must be greater or equal to (num_features + periodic_features)
+hidden_dim = 60
 nhead = 15  # must divide out_features
 dim_feedforward = 384
 dropout = 0.0
@@ -61,7 +63,7 @@ random_start_point = False
 clip_param = 0.75
 lr = 0.5
 gamma = 0.95
-step_size = 1.0
+step_size = 1
 
 
 # Device configuration
@@ -78,7 +80,7 @@ plt.rc('font', **font)
 
 # %%
 # load the data
-data = pd.read_csv("../input/btcusdt/BTCUSDT-3m-2024-12.csv")
+data = pd.read_csv("../input/btcusdt/BTCUSDT-1m-2024-12.csv")
 
 def plot_correlation(data, title, figsize=(10, 5)):
     """Plots correlations between all columns in data
@@ -145,7 +147,9 @@ extra_features = ['TRIX', 'VWAP', 'MACD', 'EV_MACD', 'MOM', 'RSI', 'IFT_RSI', 'T
                   'STOCHRSI', 'MI', 'CHAIKIN', 'VZO', 'PZO', 'EFI', 'EBBP', 'BASP', 'BASPN', 'WTO', 'SQZMI', 'VFI',
                   'STC']
 both_columns_features = ["DMI", "EBBP", "BASP", "BASPN"]
-add_finta_feature(data_min, extra_features, both_columns_features)
+
+data_min = detect_trend(data_min)
+data_min = add_finta_feature(data_min, extra_features, both_columns_features)
 
 
 # check correlation between all features including new ones in minutes form
@@ -160,32 +164,22 @@ if plot_data_process:
     data_min.info()
 
 
-# find the maximum index containing NaN
-last_nan_indices = data_min.apply(lambda col: col.last_valid_index() if col.isna().any() else -1)
+# 删除所有包含NA的行
+data_min = data_min.dropna().reset_index(drop=True)
 if plot_data_process:
-    print("Last index containing NaN in each feature:")
-    print(last_nan_indices)
-max_index = last_nan_indices.max()
-if plot_data_process:
-    print("\nLast index containing NaN in all data:", max_index)
+    print("删除NA后数据行数：", data_min.shape[0])
+# 由于已经删除了所有NA行，所以第一行一定是完整的
+first_complete_index = 0
+start_hour = first_complete_index // 60
+start_minute = first_complete_index % 60
 
-
-# drop the rows up to the last Nans in data of minutes - 131 minutes
-start_index = max_index + 1
-data_min = data_min.iloc[start_index:, :]
-data_min = data_min.reset_index(drop=True)
-start_hour = start_index // 60
-start_minute = start_index % 60
 # Drop Non-numeric columns
 data_min.drop(['open_time'], inplace=True, axis=1)
 data_min.drop(['close_time'], inplace=True, axis=1)
+data_min.drop(['ignore'], inplace=True, axis=1)
+in_features = data_min.shape[1]
+print(f"data_min shape: {data_min.shape}")
 
-# reorder columns by importance:
-new_columns_order = ['Closing_price', 'Volume_of_transactions', 'Opening_price', 'Highest_price', 'Lowest_price',
-                     'TRIX', 'VWAP', 'MACD', 'EV_MACD', 'MOM', 'RSI', 'IFT_RSI', 'TR', 'ATR', 'BBWIDTH', 'DMI_1',
-                     'DMI_2', 'ADX', 'STOCHRSI', 'MI', 'CHAIKIN', 'VZO', 'PZO', 'EFI', 'EBBP_1', 'EBBP_2', 'BASP_1',
-                     'BASP_2', 'BASPN_1', 'BASPN_2', 'WTO', 'SQZMI', 'VFI', 'STC']
-data_min = data_min[new_columns_order]
 # show info of data - now there are no Nans
 if plot_data_process:
     data_min.info()
@@ -193,14 +187,6 @@ if plot_data_process:
 # %%
 # show all features
 pd.options.display.max_columns = data_min.shape[1]
-# print first 5 lines of data
-if plot_data_process:
-    data_min.head()
-
-
-# print last 5 lines of data
-if plot_data_process:
-    data_min.tail()
 
 
 # plot chosen features per minute
@@ -238,17 +224,17 @@ if plot_data_process:
     ax.set_xlabel("Time - Minutes From (UTC+8): 2021-01-01 {:02d}:{:02d}:00".format(start_hour, start_minute))
     ax.set_ylabel("Closing Price [USD]")
     ax.set_title("Closing Price Through Time")
-    ax.plot(train_time, train_df['Closing_price'], label='Training data')
+    ax.plot(train_time, train_df['close'], label='Training data')
     if val_df is not None:
-        ax.plot(val_time, val_df['Closing_price'], label='Validation data')
-    ax.plot(test_time, test_df['Closing_price'], label='Test data')
+        ax.plot(val_time, val_df['close'], label='Validation data')
+    ax.plot(test_time, test_df['close'], label='Test data')
     ax.grid()
     ax.legend(loc="best", fontsize=12)
     plt.show()
 
 
 # Hyper-Parameters interpretation
-predicted_feature = train_df.columns.get_loc('Closing_price')
+predicted_feature = train_df.columns.get_loc('close')
 if scaler_name == 'standard':
     scaler = pp.StandardScaler()
 if scaler_name == 'minmax':
@@ -261,11 +247,14 @@ model = BTC_Transformer(num_encoder_layers=num_encoder_layers,
                         num_decoder_layers=num_decoder_layers,
                         in_features=in_features,
                         periodic_features=periodic_features,
-                        out_features=out_features,
+                        # out_features=out_features,
+                        # 用于分类任务
+                        hidden_dim=hidden_dim,
                         nhead=nhead,
                         dim_feedforward=dim_feedforward,
                         dropout=dropout,
-                        activation=activation
+                        activation=activation,
+                        num_classes = 2
                         ).to(device)
 
 # optimization
@@ -285,7 +274,8 @@ if val is not None:
     val_data = betchify(val, eval_batch_size, device).float()
 test_data = betchify(test, eval_batch_size, device).float()
 
-# %%
+
+
 # print the model
 model_stats = summary(
     model=model,
@@ -337,7 +327,12 @@ for epoch in range(1, epochs + 1):
             src_mask = src_mask[:src_batch_size, :src_batch_size]
             tgt_mask = tgt_mask[:tgt_batch_size, :tgt_batch_size]
         output = model(source, targets, src_mask, tgt_mask)
-        loss = criterion(output[:-1, :, predicted_feature], targets[1:, :, predicted_feature])
+        # 用于回归任务
+        # loss = criterion(output[:-1, :, predicted_feature], targets[1:, :, predicted_feature])
+        targets = (targets > 0.5).long()  # 先转换为0和1构成的数列
+        targets = targets[-1, :, 0]
+        output = output.view(-1, output.size(-1))
+        loss = criterion(output, targets)
 
         # backward
         optimizer.zero_grad()
