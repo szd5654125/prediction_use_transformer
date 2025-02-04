@@ -25,6 +25,7 @@ import difflib
 from data_process import train_validation_test_split, normalize_data, betchify, get_batch, add_finta_feature
 from model import BTC_Transformer
 from evaluation import evaluate
+from set_target import detect_trend
 
 
 # Device configuration
@@ -33,7 +34,7 @@ num_gpus = torch.cuda.device_count()
 num_cpus = max(multiprocessing.cpu_count() - 1, 1)
 # 计算 Optuna 的最大并行任务数
 n_parallel_trials = num_gpus + num_cpus
-
+n_parallel_trials = 1
 # font configuration
 font = {'family': 'Arial', 'weight': 'normal', 'size': 16}
 
@@ -41,7 +42,7 @@ plt.rc('font', **font)
 
 
 # load the data
-data = pd.read_csv("../input/btcusdt/BTCUSDT-3m-2024-12.csv")
+data = pd.read_csv("../input/btcusdt/BTCUSDT-1m-2024-12.csv")
 # plot data processing statistics
 plot_data_process = True
 
@@ -53,45 +54,33 @@ extra_features = ['SMA','TRIX', 'VWAP', 'MACD', 'EV_MACD', 'MOM', 'RSI', 'IFT_RS
                   'STC']
 both_columns_features = ["DMI", "EBBP", "BASP", "BASPN"]
 
+data_min = detect_trend(data_min)
 # 使用finta添加特征
 data_min = add_finta_feature(data_min, extra_features, both_columns_features)
 # 获取当前时间
 current_time = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-
 # 生成文件名并保存 CSV
 file_name = f"trend_data_{current_time}.csv"
 data_min.to_csv(file_name, index=False, encoding='utf-8')
-
 print(f"文件已保存为: {file_name}")
-# find the maximum index containing NaN
-last_nan_indices = data_min.apply(lambda col: col.index[col.isna()][-1] if col.isna().any() else -1)
 
 if plot_data_process:
-    print("Last index containing NaN in each feature:")
-    print(last_nan_indices)
-max_index = last_nan_indices.max()
+    print("原始数据行数：", data_min.shape[0])
+# 删除所有包含NA的行
+data_min = data_min.dropna().reset_index(drop=True)
 if plot_data_process:
-    print("\nLast index containing NaN in all data:", max_index)
+    print("删除NA后数据行数：", data_min.shape[0])
+# 由于已经删除了所有NA行，所以第一行一定是完整的
+first_complete_index = 0
+start_hour = first_complete_index // 60
+start_minute = first_complete_index % 60
 
-
-# drop the rows up to the last Nans in data of minutes - 131 minutes
-start_index = max_index + 1
-data_min = data_min.iloc[start_index:, :]
-data_min = data_min.reset_index(drop=True)
-start_hour = start_index // 60
-start_minute = start_index % 60
-
-
+# 去掉时间，不再需要的列以及相似的列
 data_min.drop(['open_time'], inplace=True, axis=1)
 data_min.drop(['close_time'], inplace=True, axis=1)
 data_min.drop(['ignore'], inplace=True, axis=1)
+in_features = data_min.shape[1]
 print(f"data_min shape: {data_min.shape}")
-# reorder columns by importance:
-new_columns_order = ['close', 'volume', 'open', 'high', 'low', 'quote_volume', 'count', 'taker_buy_volume',
-                     'taker_buy_quote_volume', 'SMA', 'TRIX', 'VWAP', 'MACD', 'EV_MACD', 'MOM', 'RSI', 'IFT_RSI', 'TR', 'ATR',
-                     'BBWIDTH', 'DMI_1', 'DMI_2', 'ADX', 'STOCHRSI', 'MI', 'CHAIKIN', 'VZO', 'PZO', 'EFI', 'EBBP_1',
-                     'EBBP_2', 'BASP_1', 'BASP_2', 'BASPN_1', 'BASPN_2', 'WTO', 'SQZMI', 'VFI', 'STC']
-data_min = data_min[new_columns_order]
 
 # show info of data - now there are no Nans
 if plot_data_process:
@@ -129,7 +118,7 @@ if plot_data_process:
         ax.plot(val_time, val_df['close'], label='Validation data')
     ax.plot(test_time, test_df['close'], label='Test data')
     ax.grid()
-    ax.legend(loc="best", fontsize=12) 
+    ax.legend(loc="best", fontsize=12)
     plt.show()
 
 
@@ -137,25 +126,30 @@ if plot_data_process:
 def define_model(trial):
     num_encoder_layers = trial.suggest_int("encoder_layers", 4, 8, step=4)
     num_decoder_layers = num_encoder_layers
-    in_features = 34
-    out_features = trial.suggest_int("out_features", 36, 64, step=4)
-    nhead = int(out_features / 4)
+    in_features = 40
+    # out_features = trial.suggest_int("out_features", 36, 64, step=4)
+    # nhead = int(out_features / 4)
+    hidden_dim = trial.suggest_int("hidden_dim", 44, 72, step=4)
+    nhead = int(hidden_dim / 4)
     dim_feedforward = trial.suggest_int("dim_feedforward", 128, 512, step=128)
     dropout = trial.suggest_float("dropout", 0.0, 0.3, step=0.1)
     activation = trial.suggest_categorical("activation", ["relu", "gelu"])
-    periodic_features = int((((out_features - in_features) // 10) * 4) + 2)
-    
+    # periodic_features = int((((out_features - in_features) // 10) * 4) + 2)
+    periodic_features = int((((hidden_dim - in_features) // 10) * 4) + 2)
+
     return BTC_Transformer(
                             num_encoder_layers=num_encoder_layers,
                             num_decoder_layers=num_decoder_layers,
                             in_features=in_features,
                             periodic_features=periodic_features,
-                            out_features=out_features,
+                            # out_features=out_features,
+                            # 用于分类任务
+                            hidden_dim=hidden_dim,
                             nhead=nhead,
                             dim_feedforward=dim_feedforward,
                             dropout=dropout,
-                            activation=activation
-        
+                            activation=activation,
+                            num_classes = 2
                             ).to(device), in_features
 
 # %%
@@ -170,38 +164,38 @@ def objective(trial):
 
     print(f"Trial {trial.number} running on {device}")
 
-
     # split the data
     val_percentage = 0.1
     test_percentage = 0.1
     train_, val_, test_ = train_validation_test_split(data_min, val_percentage, test_percentage)
     # define the parameters
     overlap = 1
-    criterion = nn.MSELoss()
+    criterion = nn.CrossEntropyLoss()  # nn.L1Loss(): 绝对值损失 nn.MSELoss():平方损失 nn.CrossEntropyLoss:交叉熵损失
     best_val_loss = float('inf')
     best_model = None
-    in_features = 34
+    in_features = data_min.shape[1]
     num_features = in_features
     step_size = 1
 
     epochs = 50 
        
-    train_batch_size = 32 
+    train_batch_size = 32
     eval_batch_size = 32 
     
     bptt_src = trial.suggest_int("bptt_src", 10, 60, step=10)
     bptt_tgt = trial.suggest_int("bptt_tgt", 2, 18, step=2)
     
-    lr = 0.5
-    optimizer_name = "SGD"
+    lr = trial.suggest_float("lr", low=1e-4, high=1e-1, log=True)
+
+    optimizer_name = trial.suggest_categorical("optimizer_name", ["SGD", "Adam", "AdamW"])
     
     scaler_name = trial.suggest_categorical("scaler_name", ["standard", "minmax"])
     
-    gamma = 0.95
+    gamma = trial.suggest_float("gamma", 0.7, 0.99, step=0.05)
     
     clip_param = trial.suggest_float("clip_param", 0.25, 1, step=0.25)
     
-    random_start_point = trial.suggest_categorical("random_start_point", ["True", "False"])
+    random_start_point = "True"  # trial.suggest_categorical("random_start_point", ["True", "False"])  取消固定起点减少时间
     
     # define the model
     model, in_features = define_model(trial)
@@ -227,6 +221,7 @@ def objective(trial):
         val = val_df
     test = test_df.iloc[:, :num_features]
     train, val, test, scaler = normalize_data(train, val, test, scaler)
+
     train_data = betchify(train, train_batch_size, device).float()
     if val is not None:
         val_data = betchify(val, eval_batch_size, device).float()
@@ -245,12 +240,11 @@ def objective(trial):
             start_point = 0
 
         num_batches = (len(train_data) - start_point) // bptt_src
-        log_interval = round(num_batches // 3 / 10) * 10
-
+        log_interval =  max(1, round(num_batches // 3 / 10) * 10)
         # masks for the model 
         src_mask = torch.zeros((bptt_src, bptt_src), dtype=torch.bool).to(device) # zeros mask for the source (no mask)
         tgt_mask = model.transformer.generate_square_subsequent_mask(bptt_tgt).to(device) # look-ahead mask for the target
-
+        # print(train_data[:10, :, 9])
         for batch, i in enumerate(range(start_point, train_data.size(0) - 1, bptt_src)):
             # forward
             source, targets = get_batch(train_data, i, bptt_src, bptt_tgt, overlap)
@@ -260,7 +254,12 @@ def objective(trial):
                 src_mask = src_mask[:src_batch_size, :src_batch_size]
                 tgt_mask = tgt_mask[:tgt_batch_size, :tgt_batch_size]
             output = model(source, targets, src_mask, tgt_mask)
-            loss = criterion(output[:-1,:,predicted_feature], targets[1:,:,predicted_feature])
+            # loss = criterion(output[:-1,:,predicted_feature], targets[1:,:,predicted_feature])
+            # 用于分类任务
+            targets = (targets > 0.5).long()  # 先转换为0和1构成的数列
+            targets = targets[-1, :, 0]
+            output = output.view(-1, output.size(-1))
+            loss = criterion(output, targets)
 
             # backward
             optimizer.zero_grad()
@@ -302,8 +301,8 @@ def objective(trial):
 
     return val_loss
 
-
-predicted_feature = train_df.columns.get_loc('close')
+# 设置要预测的列
+predicted_feature = train_df.columns.get_loc('trend_returns')
 
 sampler = optuna.samplers.TPESampler()
 

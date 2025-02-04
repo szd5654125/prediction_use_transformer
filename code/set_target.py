@@ -1,11 +1,8 @@
 # Pandas
 import pandas as pd
+import datetime
 
-# load the data
-data = pd.read_csv("../input/btcusdt/BTCUSDT-3m-2024-12.csv")
-
-
-def detect_trend(df, cost=0.00036):
+def detect_trend(df, cost=0.00072):
     trend_returns = [None] * len(df)  # 预初始化输出序列
     i = 0
     n = len(df)
@@ -26,7 +23,7 @@ def detect_trend(df, cost=0.00036):
                 continue
             # 当波动超过cost时确认趋势
             else:
-                if close_price > open_price:  # 1: 上涨, -1: 下跌
+                if close_price > open_price:  # 0: 上涨, 1: 下跌
                     highest_index = close_index
                     highest_price = close_price
                     # 2. 继续寻找趋势结束点
@@ -43,8 +40,9 @@ def detect_trend(df, cost=0.00036):
                             '''if i == 0:
                                 print(i, highest_index)'''
                             for trend_index in range(i, highest_index + 1):
-                                trend_returns[trend_index] = ((highest_price - df.iloc[trend_index]['open']) /
-                                                              df.iloc[trend_index]['open'])
+                                '''trend_returns[trend_index] = ((highest_price - df.iloc[trend_index]['open']) /
+                                                              df.iloc[trend_index]['open'])'''
+                                trend_returns[trend_index] = -1  # 将输出修改为分类用的0, 1格式
                                 '''if i == 0:
                                     print('trend_returns[0]:', trend_returns[trend_index])
                             if i == 0:
@@ -65,8 +63,9 @@ def detect_trend(df, cost=0.00036):
                         # 如果回撤超过交易成本代表趋势结束，填上最小值到之前所有位置的趋势数
                         if (current_close - lowest_price) / lowest_price > cost:
                             for trend_index in range(i, lowest_index + 1):
-                                trend_returns[trend_index] = ((lowest_price - df.iloc[trend_index]['open']) /
-                                                              df.iloc[trend_index]['open'])
+                                '''trend_returns[trend_index] = ((lowest_price - df.iloc[trend_index]['open']) /
+                                                              df.iloc[trend_index]['open'])'''
+                                trend_returns[trend_index] = 1  # 将输出修改为分类用的0, 1格式
                             break
                     break
         i = max(lowest_index, highest_index) + 1  # 移动 i 到下一个未处理的位置
@@ -74,8 +73,8 @@ def detect_trend(df, cost=0.00036):
     # 将趋势数据添加到 df
     df['trend_returns'] = trend_returns
 
-    '''# 获取当前时间
-    current_time = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+    # 获取当前时间
+    '''current_time = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
 
     # 生成文件名并保存 CSV
     file_name = f"trend_data_{current_time}.csv"
@@ -84,8 +83,3 @@ def detect_trend(df, cost=0.00036):
     print(f"文件已保存为: {file_name}")'''
 
     return df
-
-
-# 运行趋势检测
-'''trend_df = detect_trend(data)
-print(trend_df.head(10))'''

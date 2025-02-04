@@ -86,6 +86,7 @@ def get_batch(data, i, bptt_src, bptt_tgt, overlap):
     target_seq_len = min(bptt_tgt, len(data) - i - src_seq_len + overlap)
     source = data[i: i + src_seq_len]
     target = data[i + src_seq_len - overlap: i + src_seq_len + target_seq_len - overlap]
+
     return source, target
 
 

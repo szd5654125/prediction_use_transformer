@@ -31,7 +31,12 @@ def evaluate(model, data, bptt_src, bptt_tgt, overlap, criterion, predicted_feat
                 src_mask = src_mask[:src_batch_size, :src_batch_size]
                 tgt_mask = tgt_mask[:tgt_batch_size, :tgt_batch_size]
             output = model(source, targets, src_mask, tgt_mask)
-            loss = criterion(output[:-1, :, predicted_feature], targets[1:, :, predicted_feature])
+            # loss = criterion(output[:-1, :, predicted_feature], targets[1:, :, predicted_feature])
+            # 用于分类任务
+            targets = (targets > 0.5).long()  # 先转换为0和1构成的数列
+            targets = targets[-1, :, 0]
+            output = output.view(-1, output.size(-1))
+            loss = criterion(output, targets)
             total_loss += len(source) * loss.item()
     mean_loss = total_loss / (len(data) - 1)
     return mean_loss
