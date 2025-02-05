@@ -30,7 +30,6 @@ from set_target import detect_trend
 
 
 # Device configuration
-device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 num_gpus = torch.cuda.device_count()
 num_cpus = max(multiprocessing.cpu_count() - 1, 1)
 task_queue = queue.Queue()
@@ -45,7 +44,7 @@ plt.rc('font', **font)
 
 
 # load the data
-data = pd.read_csv("../input/btcusdt/BTCUSDT-1m-2024-12.csv")
+data = pd.read_csv("../input/btcusdt/BTCUSDT-1m-2024-10.csv")
 # plot data processing statistics
 plot_data_process = True
 
