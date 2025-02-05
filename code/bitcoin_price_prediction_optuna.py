@@ -21,6 +21,7 @@ import sklearn.preprocessing as pp
 import multiprocessing
 import datetime
 import difflib
+import queue
 
 from data_process import train_validation_test_split, normalize_data, betchify, get_batch, add_finta_feature
 from model import BTC_Transformer
@@ -32,9 +33,11 @@ from set_target import detect_trend
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 num_gpus = torch.cuda.device_count()
 num_cpus = max(multiprocessing.cpu_count() - 1, 1)
-# 计算 Optuna 的最大并行任务数
-n_parallel_trials = num_gpus + num_cpus
-n_parallel_trials = 1
+task_queue = queue.Queue()
+
+num_tasks = 500
+remaining_tasks = num_tasks
+
 # font configuration
 font = {'family': 'Arial', 'weight': 'normal', 'size': 16}
 
@@ -122,6 +125,17 @@ if plot_data_process:
     plt.show()
 
 
+def task_done(result):
+    """任务完成后，自动分配新的任务"""
+    trial_id, device = result
+    print(f"Trial {trial_id} on {device} finished.")
+
+    global remaining_tasks
+    if remaining_tasks > 0:
+        new_trial_id = num_tasks - remaining_tasks
+        remaining_tasks -= 1
+        task_queue.put((new_trial_id, device))
+
 # declaration of the define_model class for optuna
 def define_model(trial):
     num_encoder_layers = trial.suggest_int("encoder_layers", 4, 8, step=4)
@@ -156,11 +170,7 @@ def define_model(trial):
 # declaration of the objective class for optuna
 def objective(trial):
     # 分配计算设备
-    if num_gpus > 0:
-        gpu_id = trial.number % num_gpus  # 轮询方式分配 GPU
-        device = torch.device(f"cuda:{gpu_id}")
-    else:
-        device = torch.device("cpu")
+    trial_id, device = task_queue.get()
 
     print(f"Trial {trial.number} running on {device}")
 
@@ -307,7 +317,7 @@ predicted_feature = train_df.columns.get_loc('trend_returns')
 sampler = optuna.samplers.TPESampler()
 
 study = optuna.create_study(study_name="BTC_Transformer", direction="minimize", sampler=sampler)
-study.optimize(objective, n_trials=50, n_jobs=n_parallel_trials)
+study.optimize(objective, n_trials=num_tasks, n_jobs=num_gpus + num_cpus)
 
 pruned_trials = [t for t in study.trials if t.state == optuna.trial.TrialState.PRUNED]
 complete_trials = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
