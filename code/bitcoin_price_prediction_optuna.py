@@ -39,9 +39,9 @@ font = {'family': 'Arial', 'weight': 'normal', 'size': 16}
 
 plt.rc('font', **font)
 
-parent_dir = os.path.abspath(os.path.join(os.getcwd(), ".."))
+grandparent_dir = os.path.abspath(os.path.join(os.getcwd(), "..", ".."))
 
-data = pd.read_csv(os.path.join(parent_dir, "input", "btcusdt", "futures_um_monthly_klines_BTCUSDT_1m_0_55.csv"))
+data = pd.read_csv(os.path.join(grandparent_dir, "input", "btcusdt", "futures_um_monthly_klines_BTCUSDT_1m_0_55.csv"))
 # plot data processing statistics
 plot_data_process = True
 
@@ -78,6 +78,8 @@ start_minute = first_complete_index % 60
 # 去掉时间，不再需要的列以及相似的列
 data_min.drop(['open_time'], inplace=True, axis=1)
 data_min.drop(['close_time'], inplace=True, axis=1)
+data_min.drop(['quote_volume'], inplace=True, axis=1)
+data_min.drop(['taker_buy_quote_volume'], inplace=True, axis=1)
 data_min.drop(['ignore'], inplace=True, axis=1)
 in_features = data_min.shape[1]
 print(f"data_min shape: {data_min.shape}")
@@ -238,7 +240,6 @@ def objective(trial):
         # masks for the model
         src_mask = torch.zeros((bptt_src, bptt_src), dtype=torch.bool).to(device)  # zeros mask for the source (no mask)
         tgt_mask = model.transformer.generate_square_subsequent_mask(bptt_tgt).to(device)  # look-ahead mask for the target
-        # print(train_data[:10, :, 9])
         for batch, i in enumerate(range(start_point, train_data.size(0) - 1, bptt_src)):
             # forward
             source, targets = get_batch(train_data, i, bptt_src, bptt_tgt, overlap)
