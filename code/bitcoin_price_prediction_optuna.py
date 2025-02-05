@@ -21,7 +21,7 @@ import sklearn.preprocessing as pp
 import multiprocessing
 import datetime
 import difflib
-import queue
+import os
 
 from data_process import train_validation_test_split, normalize_data, betchify, get_batch, add_finta_feature
 from model import BTC_Transformer
@@ -30,28 +30,26 @@ from set_target import detect_trend
 
 
 # Device configuration
+# device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 num_gpus = torch.cuda.device_count()
 num_cpus = max(multiprocessing.cpu_count() - 1, 1)
-task_queue = queue.Queue()
-
-num_tasks = 500
-remaining_tasks = num_tasks
 
 # font configuration
 font = {'family': 'Arial', 'weight': 'normal', 'size': 16}
 
 plt.rc('font', **font)
 
+parent_dir = os.path.abspath(os.path.join(os.getcwd(), ".."))
 
-# load the data
-data = pd.read_csv("../input/btcusdt/BTCUSDT-1m-2024-10.csv")
+data = pd.read_csv(os.path.join(parent_dir, "input", "btcusdt", "futures_um_monthly_klines_BTCUSDT_1m_0_55.csv"))
 # plot data processing statistics
 plot_data_process = True
 
 # create data with all wanted features per minute
 data_min = data.copy()
 
-extra_features = ['SMA','TRIX', 'VWAP', 'MACD', 'EV_MACD', 'MOM', 'RSI', 'IFT_RSI', 'TR', 'ATR', 'BBWIDTH', 'DMI', 'ADX',
+extra_features = ['SMA', 'TRIX', 'VWAP', 'MACD', 'EV_MACD', 'MOM', 'RSI', 'IFT_RSI', 'TR', 'ATR', 'BBWIDTH', 'DMI',
+                  'ADX',
                   'STOCHRSI', 'MI', 'CHAIKIN', 'VZO', 'PZO', 'EFI', 'EBBP', 'BASP', 'BASPN', 'WTO', 'SQZMI', 'VFI',
                   'STC']
 both_columns_features = ["DMI", "EBBP", "BASP", "BASPN"]
@@ -88,7 +86,6 @@ print(f"data_min shape: {data_min.shape}")
 if plot_data_process:
     data_min.info()
 
-
 # split the data
 val_percentage = 0.1
 test_percentage = 0.1
@@ -98,7 +95,6 @@ print(np.shape(train_df))
 if val_df is not None:
     print(np.shape(val_df))
 print(np.shape(test_df))
-
 
 # plot train, validation and test separation
 if plot_data_process:
@@ -112,8 +108,8 @@ if plot_data_process:
     fig = plt.figure(figsize=(16, 8))
     st = fig.suptitle("Data Separation", fontsize=20)
     ax = fig.add_subplot(1, 1, 1)
-    ax.set_xlabel("Time - Minutes From (UTC+8): 2021-01-01 {:02d}:{:02d}:00".format(start_hour, start_minute))     
-    ax.set_ylabel("Closing Price [USD]")            
+    ax.set_xlabel("Time - Minutes From (UTC+8): 2021-01-01 {:02d}:{:02d}:00".format(start_hour, start_minute))
+    ax.set_ylabel("Closing Price [USD]")
     ax.set_title("Closing Price Through Time")
     ax.plot(train_time, train_df['close'], label='Training data')
     if val_df is not None:
@@ -124,19 +120,8 @@ if plot_data_process:
     plt.show()
 
 
-def task_done(result):
-    """任务完成后，自动分配新的任务"""
-    trial_id, device = result
-    print(f"Trial {trial_id} on {device} finished.")
-
-    global remaining_tasks
-    if remaining_tasks > 0:
-        new_trial_id = num_tasks - remaining_tasks
-        remaining_tasks -= 1
-        task_queue.put((new_trial_id, device))
-
 # declaration of the define_model class for optuna
-def define_model(trial):
+def define_model(trial, device):
     num_encoder_layers = trial.suggest_int("encoder_layers", 4, 8, step=4)
     num_decoder_layers = num_encoder_layers
     in_features = 40
@@ -151,28 +136,28 @@ def define_model(trial):
     periodic_features = int((((hidden_dim - in_features) // 10) * 4) + 2)
 
     return BTC_Transformer(
-                            num_encoder_layers=num_encoder_layers,
-                            num_decoder_layers=num_decoder_layers,
-                            in_features=in_features,
-                            periodic_features=periodic_features,
-                            # out_features=out_features,
-                            # 用于分类任务
-                            hidden_dim=hidden_dim,
-                            nhead=nhead,
-                            dim_feedforward=dim_feedforward,
-                            dropout=dropout,
-                            activation=activation,
-                            num_classes = 2
-                            ).to(device), in_features
+        num_encoder_layers=num_encoder_layers,
+        num_decoder_layers=num_decoder_layers,
+        in_features=in_features,
+        periodic_features=periodic_features,
+        # out_features=out_features,
+        # 用于分类任务
+        hidden_dim=hidden_dim,
+        nhead=nhead,
+        dim_feedforward=dim_feedforward,
+        dropout=dropout,
+        activation=activation,
+        num_classes=2
+    ).to(device), in_features
 
-# %%
+
 # declaration of the objective class for optuna
 def objective(trial):
-    # 分配计算设备
-    trial_id, device = task_queue.get()
-
-    print(f"Trial {trial.number} running on {device}")
-
+    if num_gpus > 0 and trial.number % 2 == 0:
+        device = torch.device(f"cuda:{trial.number % num_gpus}")
+    else:
+        device = torch.device("cpu")
+    print(device)
     # split the data
     val_percentage = 0.1
     test_percentage = 0.1
@@ -186,42 +171,42 @@ def objective(trial):
     num_features = in_features
     step_size = 1
 
-    epochs = 50 
-       
+    epochs = 50
+
     train_batch_size = 32
-    eval_batch_size = 32 
-    
+    eval_batch_size = 32
+
     bptt_src = trial.suggest_int("bptt_src", 10, 60, step=10)
     bptt_tgt = trial.suggest_int("bptt_tgt", 2, 18, step=2)
-    
+
     lr = trial.suggest_float("lr", low=1e-4, high=1e-1, log=True)
 
     optimizer_name = trial.suggest_categorical("optimizer_name", ["SGD", "Adam", "AdamW"])
-    
+
     scaler_name = trial.suggest_categorical("scaler_name", ["standard", "minmax"])
-    
+
     gamma = trial.suggest_float("gamma", 0.7, 0.99, step=0.05)
-    
+
     clip_param = trial.suggest_float("clip_param", 0.25, 1, step=0.25)
-    
+
     random_start_point = "True"  # trial.suggest_categorical("random_start_point", ["True", "False"])  取消固定起点减少时间
-    
+
     # define the model
-    model, in_features = define_model(trial)
+    model, in_features = define_model(trial, device)
     model.to(device)  # 让模型在正确的设备上运行
-    
+
     # define the optimizer
     optimizer = getattr(optim, optimizer_name)(model.parameters(), lr=lr)
-    
+
     # define the scheduler
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size, gamma=gamma)
-    
+
     # define the scaler
     if scaler_name == 'standard':
         scaler = pp.StandardScaler()
     if scaler_name == 'minmax':
         scaler = pp.MinMaxScaler()
-        
+
     # create the relevant data
     train = train_df.iloc[:, :num_features]
     if val_df is not None:
@@ -235,7 +220,7 @@ def objective(trial):
     if val is not None:
         val_data = betchify(val, eval_batch_size, device).float()
     test_data = betchify(test, eval_batch_size, device).float()
-    
+
     for epoch in range(1, epochs + 1):
         # epoch initialization
         model.train()
@@ -249,10 +234,10 @@ def objective(trial):
             start_point = 0
 
         num_batches = (len(train_data) - start_point) // bptt_src
-        log_interval =  max(1, round(num_batches // 3 / 10) * 10)
-        # masks for the model 
-        src_mask = torch.zeros((bptt_src, bptt_src), dtype=torch.bool).to(device) # zeros mask for the source (no mask)
-        tgt_mask = model.transformer.generate_square_subsequent_mask(bptt_tgt).to(device) # look-ahead mask for the target
+        log_interval = max(1, round(num_batches // 3 / 10) * 10)
+        # masks for the model
+        src_mask = torch.zeros((bptt_src, bptt_src), dtype=torch.bool).to(device)  # zeros mask for the source (no mask)
+        tgt_mask = model.transformer.generate_square_subsequent_mask(bptt_tgt).to(device)  # look-ahead mask for the target
         # print(train_data[:10, :, 9])
         for batch, i in enumerate(range(start_point, train_data.size(0) - 1, bptt_src)):
             # forward
@@ -294,9 +279,9 @@ def objective(trial):
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
                 best_model = copy.deepcopy(model)
-            
+
             # report results of optuna trial
-            trial.report(val_loss, epoch)  
+            trial.report(val_loss, epoch)
 
             # cut trial if we get bad results
             if trial.should_prune():
@@ -316,13 +301,13 @@ predicted_feature = train_df.columns.get_loc('trend_returns')
 sampler = optuna.samplers.TPESampler()
 
 study = optuna.create_study(study_name="BTC_Transformer", direction="minimize", sampler=sampler)
-study.optimize(objective, n_trials=num_tasks, n_jobs=num_gpus + num_cpus)
+study.optimize(objective, n_trials=5000, n_jobs=(num_gpus + num_cpus)*2)  # 并行数乘二是因为一个gpu可以运行多个任务
 
 pruned_trials = [t for t in study.trials if t.state == optuna.trial.TrialState.PRUNED]
 complete_trials = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
 
 print("Study statistics: ")
-print("Number of finished trials: ",len(study.trials))
+print("Number of finished trials: ", len(study.trials))
 print("Number of pruned trials: ", len(pruned_trials))
 print("Number of complete trials: ", len(complete_trials))
 print("Best trial: ")
@@ -337,7 +322,7 @@ for key, value in trial.params.items():
 optuna.visualization.plot_param_importances(study)
 
 # Visualizing the Search Space
-optuna.visualization.plot_contour(study, params=["encoder_layers", "out_features"])
+optuna.visualization.plot_contour(study, params=["encoder_layers", "hidden_dim"])
 
 # Visualizing the Search Space
 optuna.visualization.plot_contour(study, params=["out_features", "dim_feedforward"])
@@ -356,4 +341,3 @@ optuna.visualization.plot_contour(study, params=["bptt_src", "bptt_tgt"])
 
 # Visualizing the Search Space
 optuna.visualization.plot_contour(study, params=["bptt_tgt", "clip_param"])
-
