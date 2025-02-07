@@ -322,24 +322,23 @@ for key, value in trial.params.items():
 
 # check which parameter is the most effective
 optuna.visualization.plot_param_importances(study)
-
 # Visualizing the Search Space
 optuna.visualization.plot_contour(study, params=["encoder_layers", "hidden_dim"])
-
 # Visualizing the Search Space
 optuna.visualization.plot_contour(study, params=["out_features", "dim_feedforward"])
-
 # Visualizing the Search Space
 optuna.visualization.plot_contour(study, params=["dim_feedforward", "dropout"])
-
 # Visualizing the Search Space
 optuna.visualization.plot_contour(study, params=["dropout", "activation"])
-
 # Visualizing the Search Space
 optuna.visualization.plot_contour(study, params=["activation", "bptt_src"])
-
 # Visualizing the Search Space
 optuna.visualization.plot_contour(study, params=["bptt_src", "bptt_tgt"])
-
 # Visualizing the Search Space
 optuna.visualization.plot_contour(study, params=["bptt_tgt", "clip_param"])
+# Visualizing the Search Space
+optuna.visualization.plot_contour(study, params=["clip_param", "lr"])
+# Visualizing the Search Space
+optuna.visualization.plot_contour(study, params=["lr", "optimizer_name"])
+# Visualizing the Search Space
+optuna.visualization.plot_contour(study, params=["optimizer_name", "gamma"])
