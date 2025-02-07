@@ -1,6 +1,8 @@
 import torch
 import sklearn.preprocessing as pp
 from finta import TA
+import datetime as time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 
 def train_validation_test_split(data, val_percentage, test_percentage):
@@ -114,4 +116,65 @@ def add_finta_feature(data, feature_names, both_columns_features):
         else:
             data[feature_name] = finta_feature
 
+    return data
+
+
+def compute_finta_feature(feature_name, data, both_columns_features):
+    """计算单个 Finta 指标，并返回结果"""
+    print(f"[START] 开始计算 {feature_name} 指标...")
+
+    try:
+        feature_func = getattr(TA, feature_name)
+        finta_feature = feature_func(data)
+
+        if finta_feature.isna().all().all():
+            print(f"[WARNING] Feature '{feature_name}' is empty after calculation.")
+            return None
+
+        if finta_feature.ndim > 1:
+            if feature_name in both_columns_features:
+                result = {
+                    f"{feature_name}_1": finta_feature.iloc[:, 0],
+                    f"{feature_name}_2": finta_feature.iloc[:, 1]
+                }
+            else:
+                result = {feature_name: finta_feature.iloc[:, 0]}
+        else:
+            result = {feature_name: finta_feature}
+        return result
+
+    except Exception as e:
+        print(f"[ERROR] 计算 {feature_name} 时出错: {e}")
+        return None
+
+
+def add_finta_feature_parallel(data, feature_names, both_columns_features, num_processes=128):
+    """多进程计算 Finta 指标"""
+    results = []
+
+    print(f"\n[INFO] 开始并行计算 {len(feature_names)} 个指标，使用 {num_processes} 进程...")
+
+    # 使用进程池进行并行计算
+    with ProcessPoolExecutor(max_workers=num_processes) as executor:
+        future_to_feature = {
+            executor.submit(compute_finta_feature, feature, data, both_columns_features): feature
+            for feature in feature_names
+        }
+
+        for future in as_completed(future_to_feature):
+            feature_name = future_to_feature[future]  # 获取当前计算的指标名
+            try:
+                result = future.result()
+                if result:
+                    results.append(result)
+                    print(f"[RESULT] {feature_name} 计算完成，已合并到数据集")
+            except Exception as e:
+                print(f"[ERROR] {feature_name} 计算失败: {e}")
+
+    # 合并结果
+    for result in results:
+        for col_name, values in result.items():
+            data[col_name] = values
+
+    print(f"\n[INFO] 全部指标计算完成，共添加 {len(results)} 个指标。\n")
     return data

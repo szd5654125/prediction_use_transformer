@@ -23,10 +23,10 @@ import datetime
 import difflib
 import os
 
-from data_process import train_validation_test_split, normalize_data, betchify, get_batch, add_finta_feature
+from data_process import train_validation_test_split, normalize_data, betchify, get_batch, add_finta_feature_parallel
 from model import BTC_Transformer
 from evaluation import evaluate
-from set_target import detect_trend
+from set_target import detect_trend, detect_trend_optimized
 
 
 # Device configuration
@@ -44,6 +44,8 @@ grandparent_dir = os.path.abspath(os.path.join(os.getcwd(), "..", ".."))
 data = pd.read_csv(os.path.join(grandparent_dir, "input", "btcusdt", "futures_um_monthly_klines_BTCUSDT_1m_0_55.csv"))
 # plot data processing statistics
 plot_data_process = True
+data['open_time'] = pd.to_datetime(data['open_time'], unit='ms')
+data['close_time'] = pd.to_datetime(data['close_time'], unit='ms')
 
 # create data with all wanted features per minute
 data_min = data.copy()
@@ -53,10 +55,9 @@ extra_features = ['SMA', 'TRIX', 'VWAP', 'MACD', 'EV_MACD', 'MOM', 'RSI', 'IFT_R
                   'STOCHRSI', 'MI', 'CHAIKIN', 'VZO', 'PZO', 'EFI', 'EBBP', 'BASP', 'BASPN', 'WTO', 'SQZMI', 'VFI',
                   'STC']
 both_columns_features = ["DMI", "EBBP", "BASP", "BASPN"]
-
-data_min = detect_trend(data_min)
+data_min = detect_trend_optimized(data_min)
 # 使用finta添加特征
-data_min = add_finta_feature(data_min, extra_features, both_columns_features)
+data_min = add_finta_feature_parallel(data_min, extra_features, both_columns_features)
 # 获取当前时间
 '''current_time = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
 # 生成文件名并保存 CSV
@@ -80,7 +81,7 @@ data_min.drop(['open_time'], inplace=True, axis=1)
 data_min.drop(['close_time'], inplace=True, axis=1)
 data_min.drop(['quote_volume'], inplace=True, axis=1)
 data_min.drop(['taker_buy_quote_volume'], inplace=True, axis=1)
-data_min.drop(['ignore'], inplace=True, axis=1)
+# data_min.drop(['ignore'], inplace=True, axis=1)
 in_features = data_min.shape[1]
 print(f"data_min shape: {data_min.shape}")
 
@@ -126,7 +127,7 @@ if plot_data_process:
 def define_model(trial, device):
     num_encoder_layers = trial.suggest_int("encoder_layers", 4, 8, step=4)
     num_decoder_layers = num_encoder_layers
-    in_features = 40
+    in_features = data_min.shape[1]
     # out_features = trial.suggest_int("out_features", 36, 64, step=4)
     # nhead = int(out_features / 4)
     hidden_dim = trial.suggest_int("hidden_dim", 44, 72, step=4)
@@ -155,7 +156,7 @@ def define_model(trial, device):
 
 # declaration of the objective class for optuna
 def objective(trial):
-    if num_gpus > 0 and trial.number % 2 == 0:
+    if num_gpus > 0:
         device = torch.device(f"cuda:{trial.number % num_gpus}")
     else:
         device = torch.device("cpu")
@@ -302,7 +303,7 @@ predicted_feature = train_df.columns.get_loc('trend_returns')
 sampler = optuna.samplers.TPESampler()
 
 study = optuna.create_study(study_name="BTC_Transformer", direction="minimize", sampler=sampler)
-study.optimize(objective, n_trials=5000, n_jobs=(num_gpus + num_cpus)*2)  # 并行数乘二是因为一个gpu可以运行多个任务
+study.optimize(objective, n_trials=200, n_jobs=40)  # 并行数乘二是因为一个gpu可以运行多个任务
 
 pruned_trials = [t for t in study.trials if t.state == optuna.trial.TrialState.PRUNED]
 complete_trials = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
