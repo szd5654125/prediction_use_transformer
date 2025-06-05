@@ -21,7 +21,9 @@ import sklearn.preprocessing as pp
 import multiprocessing
 import datetime
 import difflib
+import threading
 import os
+import queue
 
 from data_process import train_validation_test_split, normalize_data, betchify, get_batch, add_finta_feature_parallel
 from model import BTC_Transformer
@@ -32,7 +34,15 @@ from set_target import detect_trend, detect_trend_optimized
 # Device configuration
 # device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 num_gpus = torch.cuda.device_count()
-num_cpus = max(multiprocessing.cpu_count() - 1, 1)
+num_cpus = max(multiprocessing.cpu_count(), 1)
+
+# 限制 CPU 任务数量，防止 CPU 任务堆积
+max_cpu_jobs = num_cpus  # 限制 CPU 任务
+max_gpu_jobs = num_gpus * 10  # 每个 GPU 最多运行 10 个任务
+total_jobs = max_cpu_jobs + max_gpu_jobs  # 总任务数
+
+cpu_lock = threading.Lock()  # 线程锁，防止 CPU 任务计数竞争
+cpu_active_tasks = 0  # 当前 CPU 任务计数
 
 # font configuration
 font = {'family': 'Arial', 'weight': 'normal', 'size': 16}
@@ -41,7 +51,7 @@ plt.rc('font', **font)
 
 grandparent_dir = os.path.abspath(os.path.join(os.getcwd(), "..", ".."))
 
-data = pd.read_csv(os.path.join(grandparent_dir, "input", "btcusdt", "futures_um_monthly_klines_BTCUSDT_1m_0_55.csv"))
+data = pd.read_csv(os.path.join(grandparent_dir, "input", "btcusdt", "BTCUSDT-1m-2024-10.csv"))
 # plot data processing statistics
 plot_data_process = True
 data['open_time'] = pd.to_datetime(data['open_time'], unit='ms')
@@ -130,8 +140,8 @@ def define_model(trial, device):
     in_features = data_min.shape[1]
     # out_features = trial.suggest_int("out_features", 36, 64, step=4)
     # nhead = int(out_features / 4)
-    hidden_dim = trial.suggest_int("hidden_dim", 44, 72, step=4)
-    nhead = int(hidden_dim / 4)
+    hidden_dim = trial.suggest_int("hidden_dim", 48, 72, step=4)
+    nhead = max(2, int(hidden_dim / 4)) # ✅ 确保 `nhead` 为偶数
     dim_feedforward = trial.suggest_int("dim_feedforward", 128, 512, step=128)
     dropout = trial.suggest_float("dropout", 0.0, 0.3, step=0.1)
     activation = trial.suggest_categorical("activation", ["relu", "gelu"])
@@ -156,11 +166,19 @@ def define_model(trial, device):
 
 # declaration of the objective class for optuna
 def objective(trial):
-    if num_gpus > 0:
-        device = torch.device(f"cuda:{trial.number % num_gpus}")
-    else:
-        device = torch.device("cpu")
-    print(device)
+    """动态监测 CPU 负载，智能分配任务"""
+    global cpu_active_tasks
+    # 检查当前 CPU 活跃任务数
+    with cpu_lock:
+        if cpu_active_tasks < max_cpu_jobs:
+            cpu_active_tasks += 1  # 增加 CPU 任务计数
+            device = torch.device("cpu")
+        elif num_gpus > 0:
+            device = torch.device(f"cuda:{trial.number % num_gpus}")
+        else:
+            device = torch.device("cpu")  # 如果没有 GPU，所有任务都在 CPU
+
+    print(f"Running trial {trial.number} on {device}")
     # split the data
     val_percentage = 0.1
     test_percentage = 0.1
@@ -295,15 +313,21 @@ def objective(trial):
     if val is None:
         best_model = copy.deepcopy(model)
 
+    # 任务完成后减少 CPU 任务计数
+    if device.type == "cpu":
+        with cpu_lock:
+            cpu_active_tasks -= 1  # 任务完成，减少 CPU 任务数
+
     return val_loss
 
 # 设置要预测的列
 predicted_feature = train_df.columns.get_loc('trend_returns')
 
 sampler = optuna.samplers.TPESampler()
-
+# 三块gpu最多运行40个任务，cpu最多128个，两个设备当前任务比值是1:2
 study = optuna.create_study(study_name="BTC_Transformer", direction="minimize", sampler=sampler)
-study.optimize(objective, n_trials=200, n_jobs=40)  # 并行数乘二是因为一个gpu可以运行多个任务
+# study.optimize(objective, n_trials=200, n_jobs=total_jobs)  # 并行数乘二是因为一个gpu可以运行多个任务
+study.optimize(objective, n_trials=200)  # 先尝试一个任务
 
 pruned_trials = [t for t in study.trials if t.state == optuna.trial.TrialState.PRUNED]
 complete_trials = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
