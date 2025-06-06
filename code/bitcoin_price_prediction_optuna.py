@@ -12,27 +12,21 @@ import torch.nn as nn
 # Optuna
 import optuna
 import torch.optim as optim
-import plotly
 
 # Others
 import matplotlib.pyplot as plt
 import copy
 import sklearn.preprocessing as pp
 import multiprocessing
-import datetime
-import difflib
 import threading
 import os
-import queue
 
 from data_process import train_validation_test_split, normalize_data, betchify, get_batch, add_finta_feature_parallel
 from model import BTC_Transformer
 from evaluation import evaluate
-from set_target import detect_trend, detect_trend_optimized
+from set_target import detect_trend_optimized
 
 
-# Device configuration
-# device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 num_gpus = torch.cuda.device_count()
 num_cpus = max(multiprocessing.cpu_count(), 1)
 
@@ -68,15 +62,7 @@ both_columns_features = ["DMI", "EBBP", "BASP", "BASPN"]
 data_min = detect_trend_optimized(data_min)
 # 使用finta添加特征
 data_min = add_finta_feature_parallel(data_min, extra_features, both_columns_features)
-# 获取当前时间
-'''current_time = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-# 生成文件名并保存 CSV
-file_name = f"trend_data_{current_time}.csv"
-data_min.to_csv(file_name, index=False, encoding='utf-8')
-print(f"文件已保存为: {file_name}")
 
-if plot_data_process:
-    print("原始数据行数：", data_min.shape[0])'''
 # 删除所有包含NA的行
 data_min = data_min.dropna().reset_index(drop=True)
 if plot_data_process:
@@ -112,12 +98,6 @@ print(np.shape(test_df))
 # plot train, validation and test separation
 if plot_data_process:
     train_time = np.arange(np.size(train_df, 0))
-    if val_df is not None:
-        val_time = np.arange(np.size(train_df, 0), np.size(train_df, 0) + np.size(val_df, 0))
-        test_time = np.arange(np.size(train_df, 0) + np.size(val_df, 0), np.size(train_df, 0) + np.size(val_df, 0)
-                              + np.size(test_df, 0))
-    else:
-        test_time = np.arange(np.size(train_df, 0), np.size(train_df, 0) + np.size(test_df, 0))
     fig = plt.figure(figsize=(16, 8))
     st = fig.suptitle("Data Separation", fontsize=20)
     ax = fig.add_subplot(1, 1, 1)
@@ -126,7 +106,12 @@ if plot_data_process:
     ax.set_title("Closing Price Through Time")
     ax.plot(train_time, train_df['close'], label='Training data')
     if val_df is not None:
+        val_time = np.arange(np.size(train_df, 0), np.size(train_df, 0) + np.size(val_df, 0))
         ax.plot(val_time, val_df['close'], label='Validation data')
+        test_time = np.arange(np.size(train_df, 0) + np.size(val_df, 0),
+                              np.size(train_df, 0) + np.size(val_df, 0) + np.size(test_df, 0))
+    else:
+        test_time = np.arange(np.size(train_df, 0), np.size(train_df, 0) + np.size(test_df, 0))
     ax.plot(test_time, test_df['close'], label='Test data')
     ax.grid()
     ax.legend(loc="best", fontsize=12)
@@ -191,12 +176,9 @@ def objective(trial):
     in_features = data_min.shape[1]
     num_features = in_features
     step_size = 1
-
     epochs = 50
-
     train_batch_size = 32
     eval_batch_size = 32
-
     bptt_src = trial.suggest_int("bptt_src", 10, 60, step=10)
     bptt_tgt = trial.suggest_int("bptt_tgt", 2, 18, step=2)
 
@@ -225,8 +207,10 @@ def objective(trial):
     # define the scaler
     if scaler_name == 'standard':
         scaler = pp.StandardScaler()
-    if scaler_name == 'minmax':
+    elif scaler_name == 'minmax':
         scaler = pp.MinMaxScaler()
+    else:
+        raise ValueError(f'invalid scaler_name as {scaler_name}')
 
     # create the relevant data
     train = train_df.iloc[:, :num_features]
@@ -320,6 +304,136 @@ def objective(trial):
 
     return val_loss
 
+
+def retrain_model(best_params, device="cuda:0", save_path="best_model_final.pt"):
+    print(f"使用最佳参数重新训练模型，设备: {device}")
+
+    # 构建模型
+    trial = optuna.trial.FrozenTrial(
+        number=0, state=optuna.trial.TrialState.COMPLETE, value=None,
+        params=best_params, distributions=study.best_trial.distributions, user_attrs={}, system_attrs={},
+        intermediate_values={}, datetime_start=None, datetime_complete=None
+    )
+    model, _ = define_model(trial, torch.device(device))
+    model.to(device)
+
+    # 设置训练参数
+    criterion = nn.CrossEntropyLoss()
+    optimizer = getattr(optim, best_params["optimizer_name"])(model.parameters(), lr=best_params["lr"])
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=best_params["gamma"])
+    epochs = 50
+    overlap = 1
+    bptt_src = best_params["bptt_src"]
+    bptt_tgt = best_params["bptt_tgt"]
+    clip_param = best_params["clip_param"]
+
+    # 归一化数据
+    if best_params["scaler_name"] == 'standard':
+        scaler = pp.StandardScaler()
+    else:
+        scaler = pp.MinMaxScaler()
+
+    train = train_df.iloc[:, :in_features]
+    val = val_df.iloc[:, :in_features] if val_df is not None else None
+    test = test_df.iloc[:, :in_features]
+
+    train, val, test, scaler = normalize_data(train, val, test, scaler)
+
+    train_data = betchify(train, 32, torch.device(device)).float()
+    val_data = betchify(val, 32, torch.device(device)).float() if val is not None else None
+
+    best_val_loss = float('inf')
+    best_model = None
+
+    for epoch in range(1, epochs + 1):
+        model.train()
+        total_loss = 0.
+        start_point = np.random.randint(bptt_src)
+        num_batches = (len(train_data) - start_point) // bptt_src
+
+        src_mask = torch.zeros((bptt_src, bptt_src), dtype=torch.bool).to(device)
+        tgt_mask = model.transformer.generate_square_subsequent_mask(bptt_tgt).to(device)
+
+        for batch, i in enumerate(range(start_point, train_data.size(0) - 1, bptt_src)):
+            source, targets = get_batch(train_data, i, bptt_src, bptt_tgt, overlap)
+            output = model(source, targets, src_mask, tgt_mask)
+
+            targets = (targets > 0.5).long()
+            targets = targets[-1, :, 0]
+            output = output.view(-1, output.size(-1))
+            loss = criterion(output, targets)
+
+            optimizer.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), clip_param)
+            optimizer.step()
+
+            total_loss += loss.item()
+
+        scheduler.step()
+
+        if val_data is not None:
+            val_loss = evaluate(model, val_data, bptt_src, bptt_tgt, overlap, criterion, predicted_feature,
+                                torch.device(device))
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                best_model = copy.deepcopy(model)
+            print(f"[Epoch {epoch}] Val Loss: {val_loss:.4f}")
+
+    # 保存模型
+    torch.save(best_model.state_dict(), save_path)
+    print(f"✅ 最佳模型已保存至: {save_path}")
+
+    return best_model
+
+
+def visualize_test_predictions(model, test_df, scaler, predicted_feature, bptt_src, bptt_tgt, device="cuda:0"):
+    model.eval()
+    model.to(device)
+
+    # 只保留输入特征
+    test_data_raw = test_df.iloc[:, :in_features]
+    true_labels_raw = test_df.iloc[:, predicted_feature]
+
+    # 归一化
+    test_scaled = scaler.transform(test_data_raw)
+    test_scaled_tensor = torch.tensor(test_scaled, dtype=torch.float32).to(device)
+
+    # 生成批次数据
+    test_batches = betchify(pd.DataFrame(test_scaled, columns=test_data_raw.columns), batch_size=32, device=device).float()
+
+    predictions = []
+    targets = []
+
+    src_mask = torch.zeros((bptt_src, bptt_src), dtype=torch.bool).to(device)
+    tgt_mask = model.transformer.generate_square_subsequent_mask(bptt_tgt).to(device)
+
+    for i in range(0, len(test_batches) - bptt_src - bptt_tgt, bptt_src):
+        src, tgt = get_batch(test_batches, i, bptt_src, bptt_tgt, overlap=1)
+        with torch.no_grad():
+            output = model(src, tgt, src_mask, tgt_mask)
+            pred = output[-1, :, 1]  # 输出第二列，假设是1表示上涨的概率
+            predictions.append(pred.cpu().numpy())
+
+            # 目标
+            binary_target = (tgt[-1, :, 0] > 0.5).float()
+            targets.append(binary_target.cpu().numpy())
+
+    predictions = np.concatenate(predictions)
+    targets = np.concatenate(targets)
+
+    # 可视化
+    plt.figure(figsize=(15, 6))
+    plt.plot(predictions, label="Predicted Prob (Up)", color='blue')
+    plt.plot(targets, label="Actual Trend", color='red', alpha=0.6)
+    plt.title("Test Set Predictions vs Ground Truth")
+    plt.xlabel("Batch Index")
+    plt.ylabel("Probability / Binary Label")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
 # 设置要预测的列
 predicted_feature = train_df.columns.get_loc('trend_returns')
 
@@ -328,6 +442,15 @@ sampler = optuna.samplers.TPESampler()
 study = optuna.create_study(study_name="BTC_Transformer", direction="minimize", sampler=sampler)
 # study.optimize(objective, n_trials=200, n_jobs=total_jobs)  # 并行数乘二是因为一个gpu可以运行多个任务
 study.optimize(objective, n_trials=200)  # 先尝试一个任务
+best_params = study.best_trial.params
+model, _ = define_model(study.best_trial, 'gpu')
+best_model = retrain_model(best_params, device="cuda:0", save_path="best_model_final.pt")
+if best_params["scaler_name"] == 'standard':
+    scaler = pp.StandardScaler()
+else:
+    scaler = pp.MinMaxScaler()
+visualize_test_predictions(model=best_model, test_df=test_df, scaler=scaler, predicted_feature=predicted_feature,
+                           bptt_src=best_params["bptt_src"], bptt_tgt=best_params["bptt_tgt"], device="cuda:0")
 
 pruned_trials = [t for t in study.trials if t.state == optuna.trial.TrialState.PRUNED]
 complete_trials = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
