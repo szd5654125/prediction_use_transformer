@@ -125,7 +125,9 @@ def define_model(params_or_trial, device):
     num_decoder_layers = num_encoder_layers
     in_features = data_min.shape[1]
     hidden_dim = get_param("hidden_dim", suggest_fn=lambda k: params_or_trial.suggest_int(k, 48, 72, step=4))
-    nhead = get_param("nhead", default=max(2, int(hidden_dim / 4)))  # only useful when using dict input
+    candidate_nheads = [2, 4, 8]
+    possible_nheads = [n for n in candidate_nheads if hidden_dim % n == 0]
+    nhead = get_param("nhead", suggest_fn=lambda k: params_or_trial.suggest_categorical(k, possible_nheads))
     dim_feedforward = get_param("dim_feedforward", suggest_fn=lambda k: params_or_trial.suggest_int(k, 128, 512, step=128))
     dropout = get_param("dropout", suggest_fn=lambda k: params_or_trial.suggest_float(k, 0.0, 0.3, step=0.1))
     activation = get_param("activation", suggest_fn=lambda k: params_or_trial.suggest_categorical(k, ["relu", "gelu"]))
