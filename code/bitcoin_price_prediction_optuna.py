@@ -31,7 +31,7 @@ num_gpus = torch.cuda.device_count()
 num_cpus = max(multiprocessing.cpu_count(), 1)
 
 # 限制 CPU 任务数量，防止 CPU 任务堆积
-max_cpu_jobs = num_cpus  # 限制 CPU 任务
+max_cpu_jobs = num_cpus / 3  # 限制 CPU 任务一半给回测
 max_gpu_jobs = num_gpus * 10  # 每个 GPU 最多运行 10 个任务
 total_jobs = max_cpu_jobs + max_gpu_jobs  # 总任务数
 
