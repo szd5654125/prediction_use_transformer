@@ -2,7 +2,7 @@ import torch
 from data_process import get_batch
 
 
-def evaluate(model, data, bptt_src, bptt_tgt, overlap, criterion, predicted_feature, device):
+'''def evaluate(model, data, bptt_src, bptt_tgt, overlap, criterion, predicted_feature, device):
     """run the data through the model in eval mode and calculate the average loss in the given feature
 
     Args:
@@ -39,4 +39,32 @@ def evaluate(model, data, bptt_src, bptt_tgt, overlap, criterion, predicted_feat
             loss = criterion(output, targets)
             total_loss += len(source) * loss.item()
     mean_loss = total_loss / (len(data) - 1)
+    return mean_loss'''
+
+
+def evaluate(model, data, bptt_src, bptt_tgt, overlap, criterion, predicted_feature, device):
+    model.eval()
+    total_loss = 0.
+    src_mask = torch.zeros((bptt_src, bptt_src), dtype=torch.bool).to(device)
+    tgt_mask = model.decoder.layers[0].self_attn.bias.bool().new_ones((bptt_tgt, bptt_tgt)).tril().logical_not().to(
+        device)
+
+    with torch.no_grad():
+        for i in range(0, data.size(1) - 1, bptt_src):  # iterate over time dim
+            source, targets = get_batch(data, i, bptt_src, bptt_tgt, overlap)
+
+            if source.size(1) != bptt_src or targets.size(1) != bptt_tgt:
+                src_mask = torch.zeros((source.size(1), source.size(1)), dtype=torch.bool).to(device)
+                tgt_mask = torch.triu(torch.ones((targets.size(1), targets.size(1)), dtype=torch.bool), diagonal=1).to(
+                    device)
+
+            output = model(source, targets, src_mask, tgt_mask)
+
+            targets = (targets > 0.5).long()
+            targets = targets[:, -1, 0]
+            output = output.view(-1, output.size(-1))
+            loss = criterion(output, targets)
+            total_loss += source.size(0) * loss.item()
+
+    mean_loss = total_loss / (data.size(0) * (data.size(1) - 1))
     return mean_loss

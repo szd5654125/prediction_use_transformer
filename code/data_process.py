@@ -56,7 +56,7 @@ def normalize_data(train, val, test, scaler=pp.StandardScaler()):
     return train, val, test, fitted_scaler
 
 
-def betchify(data, batch_size, device):
+'''def betchify(data, batch_size, device):
     """Divides the data into batch_size separate sequences,
     removing extra elements that wouldn't cleanly fit.
     Args:
@@ -69,10 +69,24 @@ def betchify(data, batch_size, device):
     data = data[:seq_len * batch_size, :]
     data = data.view(batch_size, seq_len, -1)
     data = torch.transpose(data, 0, 1).contiguous()
+    return data.to(device)'''
+
+
+def betchify(data, batch_size, device):
+    """
+    Args:
+        data: Tensor [T, D] (original)
+    Returns:
+        Tensor [B, T, D]
+    """
+    total_length = data.size(0)
+    trimmed_len = total_length - (total_length % batch_size)
+    data = data[:trimmed_len]
+    data = data.view(batch_size, -1, data.size(1))  # [B, T, D]
     return data.to(device)
 
 
-def get_batch(data, i, bptt_src, bptt_tgt, overlap):
+'''def get_batch(data, i, bptt_src, bptt_tgt, overlap):
     """Divides data to source and target, from offset i
     Args:
         source: Tensor, shape [N, batch_size, E]
@@ -89,6 +103,21 @@ def get_batch(data, i, bptt_src, bptt_tgt, overlap):
     source = data[i: i + src_seq_len]
     target = data[i + src_seq_len - overlap: i + src_seq_len + target_seq_len - overlap]
 
+    return source, target'''
+
+
+def get_batch(data, i, bptt_src, bptt_tgt, overlap):
+    """
+    Args:
+        data: Tensor, shape [B, T, E]
+    Returns:
+        source: Tensor, shape [B, bptt_src, E]
+        target: Tensor, shape [B, bptt_tgt, E]
+    """
+    src_seq_len = min(bptt_src, data.size(1) - i - 1)
+    tgt_seq_len = min(bptt_tgt, data.size(1) - i - src_seq_len + overlap)
+    source = data[:, i: i + src_seq_len]
+    target = data[:, i + src_seq_len - overlap: i + src_seq_len + tgt_seq_len - overlap]
     return source, target
 
 

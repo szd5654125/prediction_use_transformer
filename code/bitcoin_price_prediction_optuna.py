@@ -242,8 +242,11 @@ def objective(trial):
         log_interval = max(1, round(num_batches // 3 / 10) * 10)
         # masks for the model
         src_mask = torch.zeros((bptt_src, bptt_src), dtype=torch.bool).to(device)  # zeros mask for the source (no mask)
-        tgt_mask = model.transformer.generate_square_subsequent_mask(bptt_tgt).to(device)  # look-ahead mask for the target
-        for batch, i in enumerate(range(start_point, train_data.size(0) - 1, bptt_src)):
+        # look-ahead mask for the target
+        # tgt_mask = model.transformer.generate_square_subsequent_mask(bptt_tgt).to(device)
+        tgt_mask = torch.triu(torch.ones((bptt_tgt, bptt_tgt), dtype=torch.bool), diagonal=1).to(device)
+        # for batch, i in enumerate(range(start_point, train_data.size(0) - 1, bptt_src)):
+        for batch, i in enumerate(range(start_point, train_data.size(1) - 1, bptt_src)):
             # forward
             source, targets = get_batch(train_data, i, bptt_src, bptt_tgt, overlap)
             src_batch_size = source.size(0)
@@ -255,8 +258,10 @@ def objective(trial):
             # loss = criterion(output[:-1,:,predicted_feature], targets[1:,:,predicted_feature])
             # 用于分类任务
             targets = (targets > 0.5).long()  # 先转换为0和1构成的数列
-            targets = targets[-1, :, 0]
-            output = output.view(-1, output.size(-1))
+            '''targets = targets[-1, :, 0]
+            output = output.view(-1, output.size(-1))'''
+            targets = targets[:, -1, 0]
+            output = output[:, -1, :]  # 只取每个 batch 的最后时间步输出
             loss = criterion(output, targets)
 
             # backward
@@ -352,15 +357,19 @@ def retrain_model(best_params, device="cuda:0", save_path="best_model_final.pt")
         num_batches = (len(train_data) - start_point) // bptt_src
 
         src_mask = torch.zeros((bptt_src, bptt_src), dtype=torch.bool).to(device)
-        tgt_mask = model.transformer.generate_square_subsequent_mask(bptt_tgt).to(device)
+        # tgt_mask = model.transformer.generate_square_subsequent_mask(bptt_tgt).to(device)
+        tgt_mask = torch.triu(torch.ones((bptt_tgt, bptt_tgt), dtype=torch.bool), diagonal=1).to(device)
 
-        for batch, i in enumerate(range(start_point, train_data.size(0) - 1, bptt_src)):
+        # for batch, i in enumerate(range(start_point, train_data.size(0) - 1, bptt_src)):
+        for batch, i in enumerate(range(start_point, train_data.size(1) - 1, bptt_src)):
             source, targets = get_batch(train_data, i, bptt_src, bptt_tgt, overlap)
             output = model(source, targets, src_mask, tgt_mask)
 
             targets = (targets > 0.5).long()
-            targets = targets[-1, :, 0]
-            output = output.view(-1, output.size(-1))
+            '''targets = targets[-1, :, 0]
+            output = output.view(-1, output.size(-1))'''
+            targets = targets[:, -1, 0]
+            output = output[:, -1, :]  # 只取每个 batch 的最后时间步输出
             loss = criterion(output, targets)
 
             optimizer.zero_grad()
@@ -406,13 +415,15 @@ def visualize_test_predictions(model, test_df, scaler, predicted_feature, bptt_s
     targets = []
 
     src_mask = torch.zeros((bptt_src, bptt_src), dtype=torch.bool).to(device)
-    tgt_mask = model.transformer.generate_square_subsequent_mask(bptt_tgt).to(device)
+    # tgt_mask = model.transformer.generate_square_subsequent_mask(bptt_tgt).to(device)
+    tgt_mask = torch.triu(torch.ones((bptt_tgt, bptt_tgt), dtype=torch.bool), diagonal=1).to(device)
 
     for i in range(0, len(test_batches) - bptt_src - bptt_tgt, bptt_src):
         src, tgt = get_batch(test_batches, i, bptt_src, bptt_tgt, overlap=1)
         with torch.no_grad():
             output = model(src, tgt, src_mask, tgt_mask)
-            pred = output[-1, :, 1]  # 输出第二列，假设是1表示上涨的概率
+            # pred = output[-1, :, 1]  # 输出第二列，假设是1表示上涨的概率
+            pred = output[:, -1, 1]
             predictions.append(pred.cpu().numpy())
 
             # 目标
