@@ -125,7 +125,7 @@ def define_model(params_or_trial, device):
             "hidden_dim", "nhead", "encoder_layers", "dim_feedforward", "dropout", "activation"
         ]}
         get = params_or_trial.get
-    num_encoder_layers = get("num_encoder_layers")
+    num_encoder_layers = get("encoder_layers")
     num_decoder_layers = num_encoder_layers
     in_features = data_min.shape[1]
     hidden_dim = get("hidden_dim")
