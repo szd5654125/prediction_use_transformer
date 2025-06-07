@@ -116,38 +116,24 @@ if plot_data_process:
 
 # declaration of the define_model class for optuna
 def define_model(params_or_trial, device):
-    # 支持 dict 或 Optuna trial 对象作为输入
-    if isinstance(params_or_trial, dict):
-        get = params_or_trial.get
-    else:
-        get = lambda key: params_or_trial.suggest_categorical(key, ["dummy"])  # will be overridden below
-        params_or_trial = {k: getattr(params_or_trial, "params", {}).get(k) for k in [
-            "hidden_dim", "nhead", "encoder_layers", "dim_feedforward", "dropout", "activation"
-        ]}
-        get = params_or_trial.get
-    num_encoder_layers = get("encoder_layers")
+    def get_param(key, default=None, suggest_fn=None):
+        if isinstance(params_or_trial, dict):
+            return params_or_trial.get(key, default)
+        else:
+            return suggest_fn(key)
+    num_encoder_layers = get_param("encoder_layers", suggest_fn=lambda k: params_or_trial.suggest_int(k, 4, 8, step=4))
     num_decoder_layers = num_encoder_layers
     in_features = data_min.shape[1]
-    hidden_dim = get("hidden_dim")
-    nhead = get("nhead")
-    dim_feedforward = get("dim_feedforward")
-    dropout = get("dropout")
-    activation = get("activation")
-    print('aaaa', type(hidden_dim), hidden_dim, 'bbbb',type(in_features), in_features)
+    hidden_dim = get_param("hidden_dim", suggest_fn=lambda k: params_or_trial.suggest_int(k, 48, 72, step=4))
+    nhead = get_param("nhead", default=max(2, int(hidden_dim / 4)))  # only useful when using dict input
+    dim_feedforward = get_param("dim_feedforward", suggest_fn=lambda k: params_or_trial.suggest_int(k, 128, 512, step=128))
+    dropout = get_param("dropout", suggest_fn=lambda k: params_or_trial.suggest_float(k, 0.0, 0.3, step=0.1))
+    activation = get_param("activation", suggest_fn=lambda k: params_or_trial.suggest_categorical(k, ["relu", "gelu"]))
     periodic_features = int((((hidden_dim - in_features) // 10) * 4) + 2)
-
     return BTC_Transformer(
-        num_encoder_layers=num_encoder_layers,
-        num_decoder_layers=num_decoder_layers,
-        in_features=in_features,
-        periodic_features=periodic_features,
-        hidden_dim=hidden_dim,
-        nhead=nhead,
-        dim_feedforward=dim_feedforward,
-        dropout=dropout,
-        activation=activation,
-        num_classes=2
-    ).to(device), in_features
+        num_encoder_layers=num_encoder_layers, num_decoder_layers=num_decoder_layers, in_features=in_features,
+        periodic_features=periodic_features, hidden_dim=hidden_dim, nhead=nhead, dim_feedforward=dim_feedforward,
+        dropout=dropout, activation=activation, num_classes=2).to(device), in_features
 
 
 # declaration of the objective class for optuna
