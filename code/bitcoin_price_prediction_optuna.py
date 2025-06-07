@@ -133,6 +133,7 @@ def define_model(params_or_trial, device):
     dim_feedforward = get("dim_feedforward")
     dropout = get("dropout")
     activation = get("activation")
+    print('aaaa', type(hidden_dim), hidden_dim, 'bbbb',type(in_features), in_features)
     periodic_features = int((((hidden_dim - in_features) // 10) * 4) + 2)
 
     return BTC_Transformer(
