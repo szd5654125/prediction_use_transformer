@@ -261,7 +261,7 @@ def objective(trial):
             '''targets = targets[-1, :, 0]
             output = output.view(-1, output.size(-1))'''
             targets = targets[:, -1, 0]
-            output = output[:, -1, :]  # 只取每个 batch 的最后时间步输出
+
             loss = criterion(output, targets)
 
             # backward
@@ -369,7 +369,7 @@ def retrain_model(best_params, device="cuda:0", save_path="best_model_final.pt")
             '''targets = targets[-1, :, 0]
             output = output.view(-1, output.size(-1))'''
             targets = targets[:, -1, 0]
-            output = output[:, -1, :]  # 只取每个 batch 的最后时间步输出
+
             loss = criterion(output, targets)
 
             optimizer.zero_grad()
