@@ -1,18 +1,14 @@
 # packages import
 # Numpy
 import numpy as np
-
 # Pandas
-import pandas as pd 
-
+import pandas as pd
 # Pytorch
 import torch
 import torch.nn as nn
-
 # Optuna
 import optuna
 import torch.optim as optim
-
 # Others
 import matplotlib.pyplot as plt
 import copy
@@ -119,18 +115,24 @@ if plot_data_process:
 
 
 # declaration of the define_model class for optuna
-def define_model(trial, device):
-    num_encoder_layers = trial.suggest_int("encoder_layers", 4, 8, step=4)
+def define_model(params_or_trial, device):
+    # 支持 dict 或 Optuna trial 对象作为输入
+    if isinstance(params_or_trial, dict):
+        get = params_or_trial.get
+    else:
+        get = lambda key: params_or_trial.suggest_categorical(key, ["dummy"])  # will be overridden below
+        params_or_trial = {k: getattr(params_or_trial, "params", {}).get(k) for k in [
+            "hidden_dim", "nhead", "encoder_layers", "dim_feedforward", "dropout", "activation"
+        ]}
+        get = params_or_trial.get
+    num_encoder_layers = get("num_encoder_layers")
     num_decoder_layers = num_encoder_layers
     in_features = data_min.shape[1]
-    # out_features = trial.suggest_int("out_features", 36, 64, step=4)
-    # nhead = int(out_features / 4)
-    hidden_dim = trial.suggest_int("hidden_dim", 48, 72, step=4)
-    nhead = max(2, int(hidden_dim / 4)) # ✅ 确保 `nhead` 为偶数
-    dim_feedforward = trial.suggest_int("dim_feedforward", 128, 512, step=128)
-    dropout = trial.suggest_float("dropout", 0.0, 0.3, step=0.1)
-    activation = trial.suggest_categorical("activation", ["relu", "gelu"])
-    # periodic_features = int((((out_features - in_features) // 10) * 4) + 2)
+    hidden_dim = get("hidden_dim")
+    nhead = get("nhead")
+    dim_feedforward = get("dim_feedforward")
+    dropout = get("dropout")
+    activation = get("activation")
     periodic_features = int((((hidden_dim - in_features) // 10) * 4) + 2)
 
     return BTC_Transformer(
@@ -138,8 +140,6 @@ def define_model(trial, device):
         num_decoder_layers=num_decoder_layers,
         in_features=in_features,
         periodic_features=periodic_features,
-        # out_features=out_features,
-        # 用于分类任务
         hidden_dim=hidden_dim,
         nhead=nhead,
         dim_feedforward=dim_feedforward,
@@ -249,11 +249,10 @@ def objective(trial):
         for batch, i in enumerate(range(start_point, train_data.size(1) - 1, bptt_src)):
             # forward
             source, targets = get_batch(train_data, i, bptt_src, bptt_tgt, overlap)
-            src_batch_size = source.size(0)
-            tgt_batch_size = targets.size(0)
-            if tgt_batch_size != bptt_tgt or src_batch_size != bptt_src:  # only on last batch
-                src_mask = src_mask[:src_batch_size, :src_batch_size]
-                tgt_mask = tgt_mask[:tgt_batch_size, :tgt_batch_size]
+            src_len = source.size(1)  # 时间维
+            tgt_len = targets.size(1)
+            src_mask = torch.zeros(src_len, src_len, dtype=torch.bool, device=device)
+            tgt_mask = torch.triu(torch.ones(tgt_len, tgt_len, dtype=torch.bool, device=device), 1)
             output = model(source, targets, src_mask, tgt_mask)
             # loss = criterion(output[:-1,:,predicted_feature], targets[1:,:,predicted_feature])
             # 用于分类任务
@@ -312,14 +311,8 @@ def objective(trial):
 
 def retrain_model(best_params, device="cuda:0", save_path="best_model_final.pt"):
     print(f"使用最佳参数重新训练模型，设备: {device}")
-
     # 构建模型
-    trial = optuna.trial.FrozenTrial(
-        number=0, state=optuna.trial.TrialState.COMPLETE, value=None,
-        params=best_params, distributions=study.best_trial.distributions, user_attrs={}, system_attrs={},
-        intermediate_values={}, datetime_start=None, datetime_complete=None
-    )
-    model, _ = define_model(trial, torch.device(device))
+    model, _ = define_model(best_params, torch.device(device))
     model.to(device)
 
     # 设置训练参数
@@ -356,13 +349,17 @@ def retrain_model(best_params, device="cuda:0", save_path="best_model_final.pt")
         start_point = np.random.randint(bptt_src)
         num_batches = (len(train_data) - start_point) // bptt_src
 
-        src_mask = torch.zeros((bptt_src, bptt_src), dtype=torch.bool).to(device)
+        # src_mask = torch.zeros((bptt_src, bptt_src), dtype=torch.bool).to(device)
         # tgt_mask = model.transformer.generate_square_subsequent_mask(bptt_tgt).to(device)
-        tgt_mask = torch.triu(torch.ones((bptt_tgt, bptt_tgt), dtype=torch.bool), diagonal=1).to(device)
+        # tgt_mask = torch.triu(torch.ones((bptt_tgt, bptt_tgt), dtype=torch.bool), diagonal=1).to(device)
 
         # for batch, i in enumerate(range(start_point, train_data.size(0) - 1, bptt_src)):
         for batch, i in enumerate(range(start_point, train_data.size(1) - 1, bptt_src)):
             source, targets = get_batch(train_data, i, bptt_src, bptt_tgt, overlap)
+            src_len = source.size(1)  # 时间维
+            tgt_len = targets.size(1)
+            src_mask = torch.zeros(src_len, src_len, dtype=torch.bool, device=device)
+            tgt_mask = torch.triu(torch.ones(tgt_len, tgt_len, dtype=torch.bool, device=device), 1)
             output = model(source, targets, src_mask, tgt_mask)
 
             targets = (targets > 0.5).long()
