@@ -46,9 +46,7 @@ def evaluate(model, data, bptt_src, bptt_tgt, overlap, criterion, predicted_feat
     model.eval()
     total_loss = 0.
     src_mask = torch.zeros((bptt_src, bptt_src), dtype=torch.bool).to(device)
-    tgt_mask = model.decoder.layers[0].self_attn.bias.bool().new_ones((bptt_tgt, bptt_tgt)).tril().logical_not().to(
-        device)
-
+    tgt_mask = torch.triu(torch.ones((bptt_tgt, bptt_tgt), dtype=torch.bool), diagonal=1).to(device)
     with torch.no_grad():
         for i in range(0, data.size(1) - 1, bptt_src):  # iterate over time dim
             source, targets = get_batch(data, i, bptt_src, bptt_tgt, overlap)
