@@ -7,6 +7,7 @@ class SineActivation(nn.Module):
     def __init__(self, in_features, periodic_features, out_features, dropout):
         super(SineActivation, self).__init__()
         # weights and biases for the periodic features
+        # print('aaa', out_features, in_features, periodic_features)
         self.w0 = nn.parameter.Parameter(torch.randn(in_features, out_features - in_features - periodic_features))
         self.b0 = nn.parameter.Parameter(torch.randn(1, out_features - in_features - periodic_features))
         # weights and biases for the linear features

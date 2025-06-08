@@ -124,10 +124,11 @@ def define_model(params_or_trial, device):
     num_encoder_layers = get_param("encoder_layers", suggest_fn=lambda k: params_or_trial.suggest_int(k, 4, 8, step=4))
     num_decoder_layers = num_encoder_layers
     in_features = data_min.shape[1]
-    hidden_dim = get_param("hidden_dim", suggest_fn=lambda k: params_or_trial.suggest_int(k, 48, 72, step=4))
+    hidden_dim = get_param("hidden_dim", suggest_fn=lambda k: params_or_trial.suggest_int(k, 48, 80, step=16))
     candidate_nheads = [2, 4, 8]
-    possible_nheads = [n for n in candidate_nheads if hidden_dim % n == 0]
-    nhead = get_param("nhead", suggest_fn=lambda k: params_or_trial.suggest_categorical(k, possible_nheads))
+    nhead = get_param("nhead", suggest_fn=lambda k: params_or_trial.suggest_categorical(k, candidate_nheads))
+    if hidden_dim % nhead != 0 or (hidden_dim // nhead) % 2 != 0:
+        raise optuna.TrialPruned()
     dim_feedforward = get_param("dim_feedforward", suggest_fn=lambda k: params_or_trial.suggest_int(k, 128, 512, step=128))
     dropout = get_param("dropout", suggest_fn=lambda k: params_or_trial.suggest_float(k, 0.0, 0.3, step=0.1))
     activation = get_param("activation", suggest_fn=lambda k: params_or_trial.suggest_categorical(k, ["relu", "gelu"]))
@@ -437,8 +438,8 @@ predicted_feature = train_df.columns.get_loc('trend_returns')
 sampler = optuna.samplers.TPESampler()
 # 三块gpu最多运行40个任务，cpu最多128个，两个设备当前任务比值是1:2
 study = optuna.create_study(study_name="BTC_Transformer", direction="minimize", sampler=sampler)
-# study.optimize(objective, n_trials=200, n_jobs=total_jobs)  # 并行数乘二是因为一个gpu可以运行多个任务
-study.optimize(objective, n_trials=200)  # 先尝试一个任务
+study.optimize(objective, n_trials=400, n_jobs=total_jobs)  # 并行数乘二是因为一个gpu可以运行多个任务
+# study.optimize(objective, n_trials=200)  # 先尝试一个任务
 best_params = study.best_trial.params
 model, _ = define_model(study.best_trial, 'gpu')
 best_model = retrain_model(best_params, device="cuda:0", save_path="best_model_final.pt")
