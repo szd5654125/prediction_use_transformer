@@ -441,7 +441,7 @@ study = optuna.create_study(study_name="BTC_Transformer", direction="minimize", 
 study.optimize(objective, n_trials=400, n_jobs=total_jobs)  # 并行数乘二是因为一个gpu可以运行多个任务
 # study.optimize(objective, n_trials=200)  # 先尝试一个任务
 best_params = study.best_trial.params
-model, _ = define_model(study.best_trial, 'gpu')
+model, _ = define_model(study.best_trial, 'cuda:0')
 best_model = retrain_model(best_params, device="cuda:0", save_path="best_model_final.pt")
 if best_params["scaler_name"] == 'standard':
     scaler = pp.StandardScaler()
