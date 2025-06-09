@@ -369,12 +369,7 @@ sampler = optuna.samplers.TPESampler()
 study = optuna.create_study(study_name="BTC_Transformer", direction="minimize", sampler=sampler)
 study.optimize(objective, n_trials=400, n_jobs=total_jobs)  # 并行数乘二是因为一个gpu可以运行多个任务
 # study.optimize(objective, n_trials=200)  # 先尝试一个任务
-best_params = study.best_trial.params
-model, _ = define_model(study.best_trial, 'cuda:0')
-best_model, scaler = retrain_model(best_params, device="cuda:0", save_path="best_model_final.pt")
-visualize_test_predictions(model=best_model, test_df=test_df, scaler=scaler, predicted_feature=predicted_feature,
-                           bptt_src=best_params["bptt_src"], bptt_tgt=best_params["bptt_tgt"], device="cuda:0")
-
+# 打印获得的最佳参数结果
 pruned_trials = [t for t in study.trials if t.state == optuna.trial.TrialState.PRUNED]
 complete_trials = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
 
@@ -389,6 +384,12 @@ print("Value: ", trial.value)
 print("Params: ")
 for key, value in trial.params.items():
     print("    {}: {}".format(key, value))
+
+best_params = study.best_trial.params
+model, _ = define_model(study.best_trial, 'cuda:0')
+best_model, scaler = retrain_model(best_params, device="cuda:0", save_path="best_model_final.pt")
+visualize_test_predictions(model=best_model, test_df=test_df, scaler=scaler, predicted_feature=predicted_feature,
+                           bptt_src=best_params["bptt_src"], bptt_tgt=best_params["bptt_tgt"], device="cuda:0")
 
 # check which parameter is the most effective
 optuna.visualization.plot_param_importances(study)
