@@ -129,7 +129,8 @@ def define_model(params_or_trial, device):
     nhead = get_param("nhead", suggest_fn=lambda k: params_or_trial.suggest_categorical(k, candidate_nheads))
     if hidden_dim % nhead != 0 or (hidden_dim // nhead) % 2 != 0:
         raise optuna.TrialPruned()
-    dim_feedforward = get_param("dim_feedforward", suggest_fn=lambda k: params_or_trial.suggest_int(k, 128, 512, step=128))
+    dim_feedforward = get_param("dim_feedforward", suggest_fn=lambda k: params_or_trial.suggest_int(k, 128, 512,
+                                                                                                    step=128))
     dropout = get_param("dropout", suggest_fn=lambda k: params_or_trial.suggest_float(k, 0.0, 0.3, step=0.1))
     activation = get_param("activation", suggest_fn=lambda k: params_or_trial.suggest_categorical(k, ["relu", "gelu"]))
     periodic_features = int((((hidden_dim - in_features) // 10) * 4) + 2)
@@ -154,15 +155,10 @@ def objective(trial):
             device = torch.device("cpu")  # 如果没有 GPU，所有任务都在 CPU
 
     print(f"Running trial {trial.number} on {device}")
-    # split the data
-    val_percentage = 0.1
-    test_percentage = 0.1
-    train_, val_, test_ = train_validation_test_split(data_min, val_percentage, test_percentage)
     # define the parameters
     overlap = 1
     criterion = nn.CrossEntropyLoss()  # nn.L1Loss(): 绝对值损失 nn.MSELoss():平方损失 nn.CrossEntropyLoss:交叉熵损失
     best_val_loss = float('inf')
-    best_model = None
     in_features = data_min.shape[1]
     num_features = in_features
     step_size = 1
@@ -171,29 +167,19 @@ def objective(trial):
     eval_batch_size = 32
     bptt_src = trial.suggest_int("bptt_src", 10, 60, step=10)
     bptt_tgt = trial.suggest_int("bptt_tgt", 2, 18, step=2)
-
     lr = trial.suggest_float("lr", low=1e-4, high=1e-1, log=True)
-
     optimizer_name = trial.suggest_categorical("optimizer_name", ["SGD", "Adam", "AdamW"])
-
     scaler_name = trial.suggest_categorical("scaler_name", ["standard", "minmax"])
-
     gamma = trial.suggest_float("gamma", 0.7, 0.99, step=0.05)
-
     clip_param = trial.suggest_float("clip_param", 0.25, 1, step=0.25)
-
     random_start_point = "True"  # trial.suggest_categorical("random_start_point", ["True", "False"])  取消固定起点减少时间
-
     # define the model
     model, in_features = define_model(trial, device)
     model.to(device)  # 让模型在正确的设备上运行
-
     # define the optimizer
     optimizer = getattr(optim, optimizer_name)(model.parameters(), lr=lr)
-
     # define the scheduler
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size, gamma=gamma)
-
     # define the scaler
     if scaler_name == 'standard':
         scaler = pp.StandardScaler()
@@ -201,7 +187,6 @@ def objective(trial):
         scaler = pp.MinMaxScaler()
     else:
         raise ValueError(f'invalid scaler_name as {scaler_name}')
-
     # create the relevant data
     train = train_df.iloc[:, :num_features]
     if val_df is not None:
@@ -210,32 +195,22 @@ def objective(trial):
         val = val_df
     test = test_df.iloc[:, :num_features]
     train, val, test, scaler = normalize_data(train, val, test, scaler)
-
     train_data = betchify(train, train_batch_size, device).float()
     if val is not None:
         val_data = betchify(val, eval_batch_size, device).float()
-    test_data = betchify(test, eval_batch_size, device).float()
-
     for epoch in range(1, epochs + 1):
         # epoch initialization
         model.train()
         total_loss = 0.
         epoch_loss = 0.
-
         # start point of the data
         if random_start_point:
             start_point = np.random.randint(bptt_src)
         else:
             start_point = 0
-
         num_batches = (len(train_data) - start_point) // bptt_src
         log_interval = max(1, round(num_batches // 3 / 10) * 10)
-        # masks for the model
-        src_mask = torch.zeros((bptt_src, bptt_src), dtype=torch.bool).to(device)  # zeros mask for the source (no mask)
         # look-ahead mask for the target
-        # tgt_mask = model.transformer.generate_square_subsequent_mask(bptt_tgt).to(device)
-        tgt_mask = torch.triu(torch.ones((bptt_tgt, bptt_tgt), dtype=torch.bool), diagonal=1).to(device)
-        # for batch, i in enumerate(range(start_point, train_data.size(0) - 1, bptt_src)):
         for batch, i in enumerate(range(start_point, train_data.size(1) - 1, bptt_src)):
             # forward
             source, targets = get_batch(train_data, i, bptt_src, bptt_tgt, overlap)
@@ -244,58 +219,41 @@ def objective(trial):
             src_mask = torch.zeros(src_len, src_len, dtype=torch.bool, device=device)
             tgt_mask = torch.triu(torch.ones(tgt_len, tgt_len, dtype=torch.bool, device=device), 1)
             output = model(source, targets, src_mask, tgt_mask)
-            # loss = criterion(output[:-1,:,predicted_feature], targets[1:,:,predicted_feature])
             # 用于分类任务
             targets = (targets > 0.5).long()  # 先转换为0和1构成的数列
-            '''targets = targets[-1, :, 0]
-            output = output.view(-1, output.size(-1))'''
             targets = targets[:, -1, 0]
-
             loss = criterion(output, targets)
-
             # backward
             optimizer.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), clip_param)
-
             # step
             optimizer.step()
-
             # record bacth statistics
             total_loss += loss.item()
             epoch_loss += len(source) * loss.item()
-
             # print statistics every log_interval
             if (batch % log_interval == 0) and batch > 0:
                 lr = scheduler.get_last_lr()[0]
                 cur_loss = total_loss / log_interval
                 total_loss = 0
-
         # evaluate on validation and save best model
         if val is not None:
             val_loss = evaluate(model, val_data, bptt_src, bptt_tgt, overlap, criterion, predicted_feature, device)
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
-                best_model = copy.deepcopy(model)
-
             # report results of optuna trial
             trial.report(val_loss, epoch)
-
             # cut trial if we get bad results
             if trial.should_prune():
                 raise optuna.exceptions.TrialPruned()
-
         # scheduler step
         scheduler.step()
-
-    if val is None:
-        best_model = copy.deepcopy(model)
 
     # 任务完成后减少 CPU 任务计数
     if device.type == "cpu":
         with cpu_lock:
             cpu_active_tasks -= 1  # 任务完成，减少 CPU 任务数
-
     return val_loss
 
 
@@ -314,7 +272,6 @@ def retrain_model(best_params, device="cuda:0", save_path="best_model_final.pt")
     bptt_src = best_params["bptt_src"]
     bptt_tgt = best_params["bptt_tgt"]
     clip_param = best_params["clip_param"]
-
     # 归一化数据
     if best_params["scaler_name"] == 'standard':
         scaler = pp.StandardScaler()
@@ -337,13 +294,6 @@ def retrain_model(best_params, device="cuda:0", save_path="best_model_final.pt")
         model.train()
         total_loss = 0.
         start_point = np.random.randint(bptt_src)
-        num_batches = (len(train_data) - start_point) // bptt_src
-
-        # src_mask = torch.zeros((bptt_src, bptt_src), dtype=torch.bool).to(device)
-        # tgt_mask = model.transformer.generate_square_subsequent_mask(bptt_tgt).to(device)
-        # tgt_mask = torch.triu(torch.ones((bptt_tgt, bptt_tgt), dtype=torch.bool), diagonal=1).to(device)
-
-        # for batch, i in enumerate(range(start_point, train_data.size(0) - 1, bptt_src)):
         for batch, i in enumerate(range(start_point, train_data.size(1) - 1, bptt_src)):
             source, targets = get_batch(train_data, i, bptt_src, bptt_tgt, overlap)
             src_len = source.size(1)  # 时间维
@@ -351,23 +301,16 @@ def retrain_model(best_params, device="cuda:0", save_path="best_model_final.pt")
             src_mask = torch.zeros(src_len, src_len, dtype=torch.bool, device=device)
             tgt_mask = torch.triu(torch.ones(tgt_len, tgt_len, dtype=torch.bool, device=device), 1)
             output = model(source, targets, src_mask, tgt_mask)
-
             targets = (targets > 0.5).long()
-            '''targets = targets[-1, :, 0]
-            output = output.view(-1, output.size(-1))'''
             targets = targets[:, -1, 0]
-
             loss = criterion(output, targets)
-
             optimizer.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), clip_param)
             optimizer.step()
 
             total_loss += loss.item()
-
         scheduler.step()
-
         if val_data is not None:
             val_loss = evaluate(model, val_data, bptt_src, bptt_tgt, overlap, criterion, predicted_feature,
                                 torch.device(device))
@@ -375,36 +318,25 @@ def retrain_model(best_params, device="cuda:0", save_path="best_model_final.pt")
                 best_val_loss = val_loss
                 best_model = copy.deepcopy(model)
             print(f"[Epoch {epoch}] Val Loss: {val_loss:.4f}")
-
     # 保存模型
     torch.save(best_model.state_dict(), save_path)
     print(f"✅ 最佳模型已保存至: {save_path}")
-
-    return best_model
+    return best_model, scaler
 
 
 def visualize_test_predictions(model, test_df, scaler, predicted_feature, bptt_src, bptt_tgt, device="cuda:0"):
     model.eval()
     model.to(device)
-
     # 只保留输入特征
     test_data_raw = test_df.iloc[:, :in_features]
-    true_labels_raw = test_df.iloc[:, predicted_feature]
-
     # 归一化
     test_scaled = scaler.transform(test_data_raw)
-    test_scaled_tensor = torch.tensor(test_scaled, dtype=torch.float32).to(device)
-
     # 生成批次数据
     test_batches = betchify(pd.DataFrame(test_scaled, columns=test_data_raw.columns), batch_size=32, device=device).float()
-
     predictions = []
     targets = []
-
     src_mask = torch.zeros((bptt_src, bptt_src), dtype=torch.bool).to(device)
-    # tgt_mask = model.transformer.generate_square_subsequent_mask(bptt_tgt).to(device)
     tgt_mask = torch.triu(torch.ones((bptt_tgt, bptt_tgt), dtype=torch.bool), diagonal=1).to(device)
-
     for i in range(0, len(test_batches) - bptt_src - bptt_tgt, bptt_src):
         src, tgt = get_batch(test_batches, i, bptt_src, bptt_tgt, overlap=1)
         with torch.no_grad():
@@ -412,14 +344,11 @@ def visualize_test_predictions(model, test_df, scaler, predicted_feature, bptt_s
             # pred = output[-1, :, 1]  # 输出第二列，假设是1表示上涨的概率
             pred = output[:, -1, 1]
             predictions.append(pred.cpu().numpy())
-
             # 目标
             binary_target = (tgt[-1, :, 0] > 0.5).float()
             targets.append(binary_target.cpu().numpy())
-
     predictions = np.concatenate(predictions)
     targets = np.concatenate(targets)
-
     # 可视化
     plt.figure(figsize=(15, 6))
     plt.plot(predictions, label="Predicted Prob (Up)", color='blue')
@@ -432,9 +361,9 @@ def visualize_test_predictions(model, test_df, scaler, predicted_feature, bptt_s
     plt.tight_layout()
     plt.show()
 
+
 # 设置要预测的列
 predicted_feature = train_df.columns.get_loc('trend_returns')
-
 sampler = optuna.samplers.TPESampler()
 # 三块gpu最多运行40个任务，cpu最多128个，两个设备当前任务比值是1:2
 study = optuna.create_study(study_name="BTC_Transformer", direction="minimize", sampler=sampler)
@@ -442,11 +371,7 @@ study.optimize(objective, n_trials=400, n_jobs=total_jobs)  # 并行数乘二是
 # study.optimize(objective, n_trials=200)  # 先尝试一个任务
 best_params = study.best_trial.params
 model, _ = define_model(study.best_trial, 'gpu')
-best_model = retrain_model(best_params, device="cuda:0", save_path="best_model_final.pt")
-if best_params["scaler_name"] == 'standard':
-    scaler = pp.StandardScaler()
-else:
-    scaler = pp.MinMaxScaler()
+best_model, scaler = retrain_model(best_params, device="cuda:0", save_path="best_model_final.pt")
 visualize_test_predictions(model=best_model, test_df=test_df, scaler=scaler, predicted_feature=predicted_feature,
                            bptt_src=best_params["bptt_src"], bptt_tgt=best_params["bptt_tgt"], device="cuda:0")
 
