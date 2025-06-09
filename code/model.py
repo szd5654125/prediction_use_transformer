@@ -28,9 +28,6 @@ class SineActivation(nn.Module):
         Returns:
             data: Tensor, shape [N, batch_size, out_features]
         """
-        '''v_linear = torch.matmul(data, self.w0) + self.b0
-        v_sin = self.activation(torch.matmul(self.w.t(), data.transpose(1, 2)).transpose(1, 2) + self.b)
-        data = torch.cat([v_linear, v_sin, data], 2)'''
         v_linear = torch.matmul(data, self.w0) + self.b0  # [B, T, D']
         v_sin = self.activation(torch.matmul(data, self.w) + self.b)  # [B, T, periodic_features]
         data = torch.cat([v_linear, v_sin, data], dim=2)  # [B, T, out_features]
@@ -105,28 +102,4 @@ class BTC_Transformer(nn.Module):
                               tgt_key_padding_mask=tgt_padding_mask,
                               memory_key_padding_mask=memory_key_padding_mask)
         return self.classifier(output[:, -1, :])  # 因为用了 batch_first
-
-    '''def encode(self, src: Tensor, src_mask: Tensor):
-        return self.transformer.encoder(self.sine_activation(src), src_mask)
-
-    def decode(self, tgt: Tensor, memory: Tensor, tgt_mask: Tensor):
-        return self.transformer.decoder(self.sine_activation(tgt), memory, tgt_mask)
-
-    def forward(self,
-                src: Tensor,
-                trg: Tensor,
-                src_mask: Tensor = None,
-                tgt_mask: Tensor = None,
-                mem_mask: Tensor = None,
-                src_padding_mask: Tensor = None,
-                tgt_padding_mask: Tensor = None,
-                memory_key_padding_mask: Tensor = None):
-        src_emb = self.sine_activation(src)
-        tgt_emb = self.sine_activation(trg)
-        outs = self.transformer(src_emb, tgt_emb, src_mask, tgt_mask, mem_mask,
-                                src_padding_mask, tgt_padding_mask, memory_key_padding_mask)
-        # 用于回归任务
-        # return self.generator(outs)
-        final_output = outs[-1]
-        return self.classifier(final_output)'''
 
