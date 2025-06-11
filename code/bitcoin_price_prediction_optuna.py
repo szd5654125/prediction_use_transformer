@@ -48,16 +48,16 @@ CONFIG = {
     "lr_range": (1e-4, 1e-1),
     "gamma_range": (0.7, 0.97, 0.05),
     "clip_range": (0.25, 1.0, 0.25),
-    "bptt_src_range": (10, 60, 10),
-    "bptt_tgt_range": (2, 18, 2),
+    "bptt_src_range": (10, 100, 10),
+    "bptt_tgt_range": (6, 28, 2),
     "optimizers": ["SGD", "Adam", "AdamW"],
     "scalers": ["standard", "minmax"],
     "activations": ["relu", "gelu"],
-    "nhead_candidates": [2, 4, 8],
-    "encoder_layer_range": (4, 8, 4),
-    "hidden_dim_range": (48, 80, 16),
+    "nhead_candidates": [2, 4, 8, 12, 16],
+    "encoder_layer_range": (2, 8, 2),
+    "hidden_dim_range": (48, 208, 16),
     "feedforward_dim_range": (128, 512, 128),
-    "dropout_range": (0.0, 0.3, 0.1),
+    "dropout_range": (0.0, 0.5, 0.1),
 
     # 显卡/CPU 并发控制
     "num_gpus": torch.cuda.device_count(),
@@ -150,6 +150,24 @@ if plot_data_process:
     plt.show()
 
 
+def compute_min_hidden_dim(in_features: int, min_linear_features: int = 1, nhead_candidates=[2, 4, 8]):
+    """
+    计算最小合法的 hidden_dim，使得：
+    1. linear_features = hidden_dim - in_features - periodic_features >= min_linear_features
+    2. hidden_dim 是最小 nhead * 2 的倍数
+    """
+    # 获取 nhead 要求的最小倍数（如 nhead=2 → hidden_dim 要是 4 的倍数）
+    base_multiple = min(nhead_candidates) * 2
+    H = in_features + base_multiple  # 起始搜索值
+
+    while True:
+        periodic = ((H - in_features) // 10) * 4 + 2
+        linear = H - in_features - periodic
+        if linear >= min_linear_features and H % base_multiple == 0:
+            return H
+        H += base_multiple
+
+
 # declaration of the define_model class for optuna
 def define_model(params_or_trial, device):
     def get_param(key, default=None, suggest_fn=None):
@@ -162,7 +180,10 @@ def define_model(params_or_trial, device):
     num_encoder_layers = get_param("encoder_layers", suggest_fn=lambda k: params_or_trial.suggest_int(k, enc_start, enc_end, step=enc_step))
     num_decoder_layers = num_encoder_layers
     in_features = data_min.shape[1]
-    hid_start, hid_end, hid_step = CONFIG["hidden_dim_range"]
+    hid_start_raw, hid_end, hid_step = CONFIG["hidden_dim_range"]
+    min_hidden_dim = compute_min_hidden_dim(in_features=data_min.shape[1], min_linear_features=1,
+                                            nhead_candidates=CONFIG["nhead_candidates"])
+    hid_start = max(hid_start_raw, min_hidden_dim)
     hidden_dim = get_param("hidden_dim", suggest_fn=lambda k: params_or_trial.suggest_int(k, hid_start, hid_end,
                                                                                           step=hid_step))
     nhead = get_param("nhead", suggest_fn=lambda k: params_or_trial.suggest_categorical(k, CONFIG["nhead_candidates"]))

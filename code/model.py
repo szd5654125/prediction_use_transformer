@@ -21,7 +21,6 @@ class SineActivation(nn.Module):
             1. keep the original features numbered by - in_features
             2. add more periodic features numbered by - periodic_features
             3. add more linear feature to end up with total of features numbered by - out_features
-
         Args:
             data: Tensor, shape [N, batch_size, in_features]
 
