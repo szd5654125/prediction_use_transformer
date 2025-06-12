@@ -383,8 +383,10 @@ def visualize_test_predictions(model, test_df, scaler, predicted_feature, bptt_s
     model.eval()
     model.to(device)
     # 只保留输入特征
+    train = train_df.iloc[:, :in_features]
+    val = val_df.iloc[:, :in_features] if val_df is not None else None
     test = test_df.iloc[:, :in_features]
-    _, _, test, _ = normalize_data(None, None, test, scaler)  # ⬅️ 关键！保持一致预处理
+    train, val, test, scaler = normalize_data(train, val, test, scaler)
     test_batches = betchify(test, batch_size=32, device=torch.device(device)).float()
     predictions = []
     targets = []
