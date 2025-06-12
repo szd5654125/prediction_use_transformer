@@ -25,7 +25,7 @@ from set_target import detect_trend_optimized
 
 CONFIG = {
     # 数据路径与特征
-    "data_file": "../../input/btcusdt/BTCUSDT-1m-2024-10.csv",
+    "data_file": "input/btcusdt/BTCUSDT-3m-2022-01_to_03.csv",
     "extra_features": [
         'SMA', 'TRIX', 'VWAP', 'MACD', 'EV_MACD', 'MOM', 'RSI', 'IFT_RSI', 'TR', 'ATR', 'BBWIDTH', 'DMI',
         'ADX', 'STOCHRSI', 'MI', 'CHAIKIN', 'VZO', 'PZO', 'EFI', 'EBBP', 'BASP', 'BASPN', 'WTO', 'SQZMI', 'VFI', 'STC'
@@ -71,7 +71,7 @@ CONFIG = {
     "font": {'family': 'Arial', 'weight': 'normal', 'size': 16},
 }
 CONFIG["max_cpu_jobs"] = CONFIG["num_cpus"] / 3  # 另外 2/3暂时给回测任务
-CONFIG["max_gpu_jobs"] = CONFIG["num_gpus"] * 10  # 每个 GPU 最多运行 10 个任务
+CONFIG["max_gpu_jobs"] = CONFIG["num_gpus"] * 5  # 每个 GPU 最多运行 10 个任务
 CONFIG["total_jobs"] = CONFIG["max_cpu_jobs"] + CONFIG["max_gpu_jobs"]
 
 cpu_lock = threading.Lock()  # 线程锁，防止 CPU 任务计数竞争
@@ -150,22 +150,15 @@ if plot_data_process:
     plt.show()
 
 
-def compute_min_hidden_dim(in_features: int, min_linear_features: int = 1, nhead_candidates=[2, 4, 8]):
-    """
-    计算最小合法的 hidden_dim，使得：
-    1. linear_features = hidden_dim - in_features - periodic_features >= min_linear_features
-    2. hidden_dim 是最小 nhead * 2 的倍数
-    """
-    # 获取 nhead 要求的最小倍数（如 nhead=2 → hidden_dim 要是 4 的倍数）
-    base_multiple = min(nhead_candidates) * 2
-    H = in_features + base_multiple  # 起始搜索值
-
+def compute_min_hidden_dim(in_features: int, min_linear_features: int = 1, nhead_candidates=(2, 4, 8, 12, 16)):
+    base = min(nhead_candidates) * 2
+    H = ((in_features + base - 1) // base) * base
     while True:
         periodic = ((H - in_features) // 10) * 4 + 2
-        linear = H - in_features - periodic
-        if linear >= min_linear_features and H % base_multiple == 0:
+        linear   = H - in_features - periodic
+        if linear >= min_linear_features:
             return H
-        H += base_multiple
+        H += base
 
 
 # declaration of the define_model class for optuna
@@ -390,11 +383,9 @@ def visualize_test_predictions(model, test_df, scaler, predicted_feature, bptt_s
     model.eval()
     model.to(device)
     # 只保留输入特征
-    test_data_raw = test_df.iloc[:, :in_features]
-    # 归一化
-    test_scaled = scaler.transform(test_data_raw)
-    # 生成批次数据
-    test_batches = betchify(test_scaled, batch_size=32, device=torch.device(device)).float()
+    test = test_df.iloc[:, :in_features]
+    _, _, test, _ = normalize_data(None, None, test, scaler)  # ⬅️ 关键！保持一致预处理
+    test_batches = betchify(test, batch_size=32, device=torch.device(device)).float()
     predictions = []
     targets = []
     src_mask = torch.zeros((bptt_src, bptt_src), dtype=torch.bool).to(device)
@@ -428,7 +419,7 @@ predicted_feature = train_df.columns.get_loc('trend_returns')
 sampler = optuna.samplers.TPESampler()
 # 三块gpu最多运行40个任务，cpu最多128个，两个设备当前任务比值是1:2
 study = optuna.create_study(study_name="BTC_Transformer", direction="minimize", sampler=sampler)
-study.optimize(objective, n_trials=400, n_jobs=CONFIG["total_jobs"])  # 并行数乘二是因为一个gpu可以运行多个任务
+study.optimize(objective, n_trials=100, n_jobs=CONFIG["total_jobs"])  # 并行数乘二是因为一个gpu可以运行多个任务
 # study.optimize(objective, n_trials=200)  # 先尝试一个任务
 # 打印获得的最佳参数结果
 pruned_trials = [t for t in study.trials if t.state == optuna.trial.TrialState.PRUNED]
