@@ -1,15 +1,11 @@
 # packages import
-# Numpy
 import numpy as np
-# Pandas
 import pandas as pd
-# Pytorch
 import torch
 import torch.nn as nn
-# Optuna
 import optuna
 import torch.optim as optim
-# Others
+import json
 import matplotlib.pyplot as plt
 import copy
 import sklearn.preprocessing as pp
@@ -374,6 +370,7 @@ def retrain_model(best_params, device="cuda:0", save_path="best_model_final.pt")
                 best_model = copy.deepcopy(model)
             print(f"[Epoch {epoch}] Val Loss: {val_loss:.4f}")
     # 保存模型
+    save_path = "best_model_final.pt"
     torch.save(best_model.state_dict(), save_path)
     print(f"✅ 最佳模型已保存至: {save_path}")
     return best_model, scaler
@@ -392,6 +389,7 @@ def visualize_test_predictions(model, test_df, scaler, predicted_feature, bptt_s
     targets = []
     src_mask = torch.zeros((bptt_src, bptt_src), dtype=torch.bool).to(device)
     tgt_mask = torch.triu(torch.ones((bptt_tgt, bptt_tgt), dtype=torch.bool), diagonal=1).to(device)
+    print(f"test_batches.shape = {test_batches.shape}, bptt_src = {bptt_src}, bptt_tgt = {bptt_tgt}")
     for i in range(0, len(test_batches) - bptt_src - bptt_tgt, bptt_src):
         src, tgt = get_batch(test_batches, i, bptt_src, bptt_tgt, CONFIG['overlap'])
         with torch.no_grad():
@@ -418,7 +416,7 @@ def visualize_test_predictions(model, test_df, scaler, predicted_feature, bptt_s
 
 # 设置要预测的列
 predicted_feature = train_df.columns.get_loc('trend_returns')
-sampler = optuna.samplers.TPESampler()
+'''sampler = optuna.samplers.TPESampler()
 # 三块gpu最多运行40个任务，cpu最多128个，两个设备当前任务比值是1:2
 study = optuna.create_study(study_name="BTC_Transformer", direction="minimize", sampler=sampler)
 study.optimize(objective, n_trials=100, n_jobs=CONFIG["total_jobs"])  # 并行数乘二是因为一个gpu可以运行多个任务
@@ -438,15 +436,42 @@ print("Value: ", trial.value)
 print("Params: ")
 for key, value in trial.params.items():
     print("    {}: {}".format(key, value))
-
 best_params = study.best_trial.params
-model, _ = define_model(study.best_trial, 'cuda:0')
-best_model, scaler = retrain_model(best_params, device="cuda:0", save_path="best_model_final.pt")
+# 保存最优参数
+with open("best_params.json", "w") as f:
+    json.dump(best_params, f)'''
+
+best_params = {
+    "bptt_src": 100,
+    "bptt_tgt": 18,
+    "lr": 0.051161026716012324,
+    "optimizer_name": "SGD",
+    "scaler_name": "standard",
+    "gamma": 0.75,
+    "clip_param": 1.0,
+    "encoder_layers": 2,
+    "hidden_dim": 96,
+    "nhead": 12,
+    "dim_feedforward": 256,
+    "dropout": 0.2,
+    "activation": "relu"
+}
+# best_model, _ = define_model(study.best_trial, 'cuda:0')
+# best_model, scaler = retrain_model(best_params, device="cuda:0", save_path="best_model_final.pt")
+best_model, _ = define_model(best_params, 'cuda:0')
+best_model.load_state_dict(torch.load("best_model_final.pt"))
+best_model.to("cuda:0")
+if best_params["scaler_name"] == 'standard':
+    scaler = pp.StandardScaler()
+else:
+    scaler = pp.MinMaxScaler()
+train = train_df.iloc[:, :in_features]
+scaler = scaler.fit(train)
 visualize_test_predictions(model=best_model, test_df=test_df, scaler=scaler, predicted_feature=predicted_feature,
                            bptt_src=best_params["bptt_src"], bptt_tgt=best_params["bptt_tgt"], device="cuda:0")
 
 # check which parameter is the most effective
-optuna.visualization.plot_param_importances(study)
+'''optuna.visualization.plot_param_importances(study)
 # Visualizing the Search Space
 optuna.visualization.plot_contour(study, params=["encoder_layers", "hidden_dim"])
 # Visualizing the Search Space
@@ -466,4 +491,4 @@ optuna.visualization.plot_contour(study, params=["clip_param", "lr"])
 # Visualizing the Search Space
 optuna.visualization.plot_contour(study, params=["lr", "optimizer_name"])
 # Visualizing the Search Space
-optuna.visualization.plot_contour(study, params=["optimizer_name", "gamma"])
+optuna.visualization.plot_contour(study, params=["optimizer_name", "gamma"])'''
