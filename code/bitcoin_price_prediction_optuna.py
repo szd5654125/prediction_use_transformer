@@ -107,7 +107,7 @@ data_min.drop(['open_time'], inplace=True, axis=1)
 data_min.drop(['close_time'], inplace=True, axis=1)
 data_min.drop(['quote_volume'], inplace=True, axis=1)
 data_min.drop(['taker_buy_quote_volume'], inplace=True, axis=1)
-# data_min.drop(['ignore'], inplace=True, axis=1)
+data_min.drop(['ignore'], inplace=True, axis=1)
 in_features = data_min.shape[1]
 print(f"data_min shape: {data_min.shape}")
 
@@ -167,7 +167,6 @@ def define_model(params_or_trial, device):
 
     enc_start, enc_end, enc_step = CONFIG["encoder_layer_range"]
     num_encoder_layers = get_param("encoder_layers", suggest_fn=lambda k: params_or_trial.suggest_int(k, enc_start, enc_end, step=enc_step))
-    num_decoder_layers = num_encoder_layers
     in_features = data_min.shape[1]
     hid_start_raw, hid_end, hid_step = CONFIG["hidden_dim_range"]
     min_hidden_dim = compute_min_hidden_dim(in_features=data_min.shape[1], min_linear_features=1,
@@ -188,7 +187,7 @@ def define_model(params_or_trial, device):
     activation = get_param("activation", suggest_fn=lambda k: params_or_trial.suggest_categorical(k, activations))
     periodic_features = int((((hidden_dim - in_features) // 10) * 4) + 2)
     return BTC_Transformer(
-        num_encoder_layers=num_encoder_layers, num_decoder_layers=num_decoder_layers, in_features=in_features,
+        num_encoder_layers=num_encoder_layers, in_features=in_features,
         periodic_features=periodic_features, hidden_dim=hidden_dim, nhead=nhead, dim_feedforward=dim_feedforward,
         dropout=dropout, activation=activation, num_classes=2).to(device), in_features
 
@@ -271,10 +270,12 @@ def objective(trial):
             tgt_len = targets.size(1)
             src_mask = torch.zeros(src_len, src_len, dtype=torch.bool, device=device)
             tgt_mask = torch.triu(torch.ones(tgt_len, tgt_len, dtype=torch.bool, device=device), 1)
-            output = model(source, targets, src_mask, tgt_mask)
+            # output = model(source, targets, src_mask, tgt_mask)
+            output = model(source, src_mask)
             # 用于分类任务
+            target_index = train_df.columns.get_loc(CONFIG["predicted_column"])
             targets = (targets > 0.5).long()  # 先转换为0和1构成的数列
-            targets = targets[:, -1, 0]
+            targets = targets[:, -1, target_index]
             loss = criterion(output, targets)
             # backward
             optimizer.zero_grad()
@@ -292,7 +293,8 @@ def objective(trial):
                 total_loss = 0
         # evaluate on validation and save best model
         if val is not None:
-            val_loss = evaluate(model, val_data, bptt_src, bptt_tgt, CONFIG['overlap'], criterion, predicted_feature, device)
+            val_loss = evaluate(model, val_data, bptt_src, bptt_tgt, CONFIG['overlap'], criterion,
+                                CONFIG["predicted_column"], device)
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
             # report results of optuna trial
@@ -351,9 +353,11 @@ def retrain_model(best_params, device="cuda:0", save_path="best_model_final.pt")
             tgt_len = targets.size(1)
             src_mask = torch.zeros(src_len, src_len, dtype=torch.bool, device=device)
             tgt_mask = torch.triu(torch.ones(tgt_len, tgt_len, dtype=torch.bool, device=device), 1)
-            output = model(source, targets, src_mask, tgt_mask)
+            # output = model(source, targets, src_mask, tgt_mask)
+            output = model(source, src_mask)
+            target_index = train_df.columns.get_loc(CONFIG["predicted_column"])
             targets = (targets > 0.5).long()
-            targets = targets[:, -1, 0]
+            targets = targets[:, -1, target_index]
             loss = criterion(output, targets)
             optimizer.zero_grad()
             loss.backward()
@@ -363,8 +367,8 @@ def retrain_model(best_params, device="cuda:0", save_path="best_model_final.pt")
             total_loss += loss.item()
         scheduler.step()
         if val_data is not None:
-            val_loss = evaluate(model, val_data, bptt_src, bptt_tgt, CONFIG['overlap'], criterion, predicted_feature,
-                                torch.device(device))
+            val_loss = evaluate(model, val_data, bptt_src, bptt_tgt, CONFIG['overlap'], criterion,
+                                CONFIG["predicted_column"], torch.device(device))
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
                 best_model = copy.deepcopy(model)
@@ -389,16 +393,22 @@ def visualize_test_predictions(model, test_df, scaler, predicted_feature, bptt_s
     targets = []
     src_mask = torch.zeros((bptt_src, bptt_src), dtype=torch.bool).to(device)
     tgt_mask = torch.triu(torch.ones((bptt_tgt, bptt_tgt), dtype=torch.bool), diagonal=1).to(device)
-    print(f"test_batches.shape = {test_batches.shape}, bptt_src = {bptt_src}, bptt_tgt = {bptt_tgt}")
-    for i in range(0, len(test_batches) - bptt_src - bptt_tgt, bptt_src):
-        src, tgt = get_batch(test_batches, i, bptt_src, bptt_tgt, CONFIG['overlap'])
-        with torch.no_grad():
-            output = model(src, tgt, src_mask, tgt_mask)
-            pred = output[:, -1, 1]
-            predictions.append(pred.cpu().numpy())
-            # 目标
-            binary_target = (tgt[-1, :, 0] > 0.5).float()
-            targets.append(binary_target.cpu().numpy())
+    sequence_length = test_batches.shape[1]
+    for batch_idx in range(test_batches.shape[0]):
+        for i in range(0, sequence_length - bptt_src - bptt_tgt, bptt_src):
+            src, tgt = get_batch(test_batches[batch_idx], i, bptt_src, bptt_tgt, CONFIG['overlap'])
+            # [time, feature] -> 加 batch 维度，变成 [1, time, feature]
+            src = src.unsqueeze(0).to(device)
+            tgt = tgt.unsqueeze(0).to(device)
+
+            with torch.no_grad():
+                src_len = src.size(1)
+                src_mask = torch.zeros(src_len, src_len, dtype=torch.bool, device=device)
+                output = model(src, src_mask=src_mask)
+                pred = output[:, -1, 1]  # shape: [1]
+                predictions.append(pred.cpu().numpy())
+                binary_target = (tgt[:, -1, 0] > 0.5).float()
+                targets.append(binary_target.cpu().numpy())
     predictions = np.concatenate(predictions)
     targets = np.concatenate(targets)
     # 可视化
@@ -415,8 +425,7 @@ def visualize_test_predictions(model, test_df, scaler, predicted_feature, bptt_s
 
 
 # 设置要预测的列
-predicted_feature = train_df.columns.get_loc('trend_returns')
-'''sampler = optuna.samplers.TPESampler()
+sampler = optuna.samplers.TPESampler()
 # 三块gpu最多运行40个任务，cpu最多128个，两个设备当前任务比值是1:2
 study = optuna.create_study(study_name="BTC_Transformer", direction="minimize", sampler=sampler)
 study.optimize(objective, n_trials=100, n_jobs=CONFIG["total_jobs"])  # 并行数乘二是因为一个gpu可以运行多个任务
@@ -437,28 +446,13 @@ print("Params: ")
 for key, value in trial.params.items():
     print("    {}: {}".format(key, value))
 best_params = study.best_trial.params
-# 保存最优参数
 with open("best_params.json", "w") as f:
-    json.dump(best_params, f)'''
+    json.dump(best_params, f)
+best_model_from_retrain, scaler = retrain_model(best_params, device="cuda:0", save_path="best_model_final.pt")
 
-best_params = {
-    "bptt_src": 100,
-    "bptt_tgt": 18,
-    "lr": 0.051161026716012324,
-    "optimizer_name": "SGD",
-    "scaler_name": "standard",
-    "gamma": 0.75,
-    "clip_param": 1.0,
-    "encoder_layers": 2,
-    "hidden_dim": 96,
-    "nhead": 12,
-    "dim_feedforward": 256,
-    "dropout": 0.2,
-    "activation": "relu"
-}
-# best_model, _ = define_model(study.best_trial, 'cuda:0')
-# best_model, scaler = retrain_model(best_params, device="cuda:0", save_path="best_model_final.pt")
-best_model, _ = define_model(best_params, 'cuda:0')
+with open("best_params.json", "r") as f:
+    best_params = json.load(f)
+best_model, _ = define_model(best_params, device="cuda:0")
 best_model.load_state_dict(torch.load("best_model_final.pt"))
 best_model.to("cuda:0")
 if best_params["scaler_name"] == 'standard':
@@ -467,11 +461,12 @@ else:
     scaler = pp.MinMaxScaler()
 train = train_df.iloc[:, :in_features]
 scaler = scaler.fit(train)
-visualize_test_predictions(model=best_model, test_df=test_df, scaler=scaler, predicted_feature=predicted_feature,
-                           bptt_src=best_params["bptt_src"], bptt_tgt=best_params["bptt_tgt"], device="cuda:0")
+
+visualize_test_predictions(model=best_model, test_df=test_df, scaler=scaler, bptt_src=best_params["bptt_src"],
+                           bptt_tgt=best_params["bptt_tgt"], device="cuda:0")
 
 # check which parameter is the most effective
-'''optuna.visualization.plot_param_importances(study)
+optuna.visualization.plot_param_importances(study)
 # Visualizing the Search Space
 optuna.visualization.plot_contour(study, params=["encoder_layers", "hidden_dim"])
 # Visualizing the Search Space
@@ -491,4 +486,4 @@ optuna.visualization.plot_contour(study, params=["clip_param", "lr"])
 # Visualizing the Search Space
 optuna.visualization.plot_contour(study, params=["lr", "optimizer_name"])
 # Visualizing the Search Space
-optuna.visualization.plot_contour(study, params=["optimizer_name", "gamma"])'''
+optuna.visualization.plot_contour(study, params=["optimizer_name", "gamma"])

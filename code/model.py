@@ -6,11 +6,8 @@ from torch import Tensor
 class SineActivation(nn.Module):
     def __init__(self, in_features, periodic_features, out_features, dropout):
         super(SineActivation, self).__init__()
-        # weights and biases for the periodic features
-        # print('aaa', out_features, in_features, periodic_features)
         self.w0 = nn.parameter.Parameter(torch.randn(in_features, out_features - in_features - periodic_features))
         self.b0 = nn.parameter.Parameter(torch.randn(1, out_features - in_features - periodic_features))
-        # weights and biases for the linear features
         self.w = nn.parameter.Parameter(torch.randn(in_features, periodic_features))
         self.b = nn.parameter.Parameter(torch.randn(1, periodic_features))
         self.activation = torch.sin
@@ -41,7 +38,7 @@ class SineActivation(nn.Module):
 class BTC_Transformer(nn.Module):
     def __init__(self,
                  num_encoder_layers: int,
-                 num_decoder_layers: int,
+                 # num_decoder_layers: int,
                  in_features: int,
                  periodic_features: int,
                  # out_features: int,
@@ -71,11 +68,10 @@ class BTC_Transformer(nn.Module):
         )
         self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_encoder_layers)
 
-        decoder_layer = nn.TransformerDecoderLayer(
+        '''decoder_layer = nn.TransformerDecoderLayer(
             d_model=hidden_dim, nhead=nhead, dim_feedforward=dim_feedforward,
             dropout=dropout, activation=activation, batch_first=True
-        )
-        self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_decoder_layers)
+        )'''
         # 用于回归任务
         # self.generator = nn.Linear(out_features, in_features)
         # 用于分类任务
@@ -84,21 +80,23 @@ class BTC_Transformer(nn.Module):
     def encode(self, src: Tensor, src_mask: Tensor = None, src_padding_mask: Tensor = None):
         return self.encoder(self.sine_activation(src), mask=src_mask, src_key_padding_mask=src_padding_mask)
 
-    def decode(self, tgt: Tensor, memory: Tensor, tgt_mask: Tensor = None, tgt_padding_mask: Tensor = None,
+    '''def decode(self, tgt: Tensor, memory: Tensor, tgt_mask: Tensor = None, tgt_padding_mask: Tensor = None,
                memory_key_padding_mask: Tensor = None):
         return self.decoder(self.sine_activation(tgt), memory, tgt_mask=tgt_mask,
                             tgt_key_padding_mask=tgt_padding_mask,
-                            memory_key_padding_mask=memory_key_padding_mask)
+                            memory_key_padding_mask=memory_key_padding_mask)'''
 
-    def forward(self, src, tgt, src_mask=None, tgt_mask=None, mem_mask=None,
-                src_padding_mask=None, tgt_padding_mask=None, memory_key_padding_mask=None):
+    '''def forward(self, src, tgt, src_mask=None, tgt_mask=None, mem_mask=None,
+                src_padding_mask=None, tgt_padding_mask=None, memory_key_padding_mask=None):'''
+    def forward(self, src, src_mask=None, src_padding_mask=None):
         src_emb = self.sine_activation(src)
-        tgt_emb = self.sine_activation(tgt)
+        # tgt_emb = self.sine_activation(tgt)
         memory = self.encoder(src_emb, mask=src_mask, src_key_padding_mask=src_padding_mask)
-        output = self.decoder(tgt_emb, memory,
+        '''output = self.decoder(tgt_emb, memory,
                               tgt_mask=tgt_mask,
                               memory_mask=mem_mask,
                               tgt_key_padding_mask=tgt_padding_mask,
                               memory_key_padding_mask=memory_key_padding_mask)
-        return self.classifier(output[:, -1, :])  # 因为用了 batch_first
+        return self.classifier(output[:, -1, :])'''
+        return self.classifier(memory[:, -1, :])
 
