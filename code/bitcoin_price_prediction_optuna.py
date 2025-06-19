@@ -413,6 +413,7 @@ def visualize_test_predictions(model, test_df, scaler, bptt_src, bptt_tgt, devic
     targets = np.concatenate(targets)
     # 可视化
     plt.figure(figsize=(15, 6))
+    plt.rcParams["font.family"] = ["DejaVu Sans", "sans-serif"]
     plt.plot(predictions, label="Predicted Prob (Up)", color='blue')
     plt.plot(targets, label="Actual Trend", color='red', alpha=0.6)
     plt.title("Test Set Predictions vs Ground Truth")
@@ -421,7 +422,8 @@ def visualize_test_predictions(model, test_df, scaler, bptt_src, bptt_tgt, devic
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
-    plt.show()
+    plt.savefig("test_predictions.png")
+    # plt.show()  # 非交互式无法展示图片
 
 
 # 设置要预测的列
