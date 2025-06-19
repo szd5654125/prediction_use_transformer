@@ -56,7 +56,7 @@ def evaluate(model, data, bptt_src, bptt_tgt, overlap, criterion, predicted_feat
                 tgt_mask = torch.triu(torch.ones((targets.size(1), targets.size(1)), dtype=torch.bool), diagonal=1).to(
                     device)
 
-            output = model(source, targets, src_mask, tgt_mask)
+            output = model(source, src_mask)
 
             targets = (targets > 0.5).long()
             targets = targets[:, -1, 0]

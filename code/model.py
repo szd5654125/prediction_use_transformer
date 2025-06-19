@@ -88,10 +88,10 @@ class BTC_Transformer(nn.Module):
 
     '''def forward(self, src, tgt, src_mask=None, tgt_mask=None, mem_mask=None,
                 src_padding_mask=None, tgt_padding_mask=None, memory_key_padding_mask=None):'''
-    def forward(self, src, src_mask=None, src_padding_mask=None):
+    def forward(self, src, src_mask=None):
         src_emb = self.sine_activation(src)
         # tgt_emb = self.sine_activation(tgt)
-        memory = self.encoder(src_emb, mask=src_mask, src_key_padding_mask=src_padding_mask)
+        memory = self.encoder(src_emb, mask=src_mask)
         '''output = self.decoder(tgt_emb, memory,
                               tgt_mask=tgt_mask,
                               memory_mask=mem_mask,

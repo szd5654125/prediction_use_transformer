@@ -151,7 +151,7 @@ def compute_min_hidden_dim(in_features: int, min_linear_features: int = 1, nhead
     H = ((in_features + base - 1) // base) * base
     while True:
         periodic = ((H - in_features) // 10) * 4 + 2
-        linear   = H - in_features - periodic
+        linear = H - in_features - periodic
         if linear >= min_linear_features:
             return H
         H += base
@@ -380,7 +380,7 @@ def retrain_model(best_params, device="cuda:0", save_path="best_model_final.pt")
     return best_model, scaler
 
 
-def visualize_test_predictions(model, test_df, scaler, predicted_feature, bptt_src, bptt_tgt, device="cuda:0"):
+def visualize_test_predictions(model, test_df, scaler, bptt_src, bptt_tgt, device="cuda:0"):
     model.eval()
     model.to(device)
     # 只保留输入特征
@@ -396,10 +396,10 @@ def visualize_test_predictions(model, test_df, scaler, predicted_feature, bptt_s
     sequence_length = test_batches.shape[1]
     for batch_idx in range(test_batches.shape[0]):
         for i in range(0, sequence_length - bptt_src - bptt_tgt, bptt_src):
-            src, tgt = get_batch(test_batches[batch_idx], i, bptt_src, bptt_tgt, CONFIG['overlap'])
+            src, tgt = get_batch(test_batches, i, bptt_src, bptt_tgt, CONFIG['overlap'])
             # [time, feature] -> 加 batch 维度，变成 [1, time, feature]
-            src = src.unsqueeze(0).to(device)
-            tgt = tgt.unsqueeze(0).to(device)
+            src = src.to(device)
+            tgt = tgt.to(device)
 
             with torch.no_grad():
                 src_len = src.size(1)
@@ -464,26 +464,3 @@ scaler = scaler.fit(train)
 
 visualize_test_predictions(model=best_model, test_df=test_df, scaler=scaler, bptt_src=best_params["bptt_src"],
                            bptt_tgt=best_params["bptt_tgt"], device="cuda:0")
-
-# check which parameter is the most effective
-optuna.visualization.plot_param_importances(study)
-# Visualizing the Search Space
-optuna.visualization.plot_contour(study, params=["encoder_layers", "hidden_dim"])
-# Visualizing the Search Space
-optuna.visualization.plot_contour(study, params=["out_features", "dim_feedforward"])
-# Visualizing the Search Space
-optuna.visualization.plot_contour(study, params=["dim_feedforward", "dropout"])
-# Visualizing the Search Space
-optuna.visualization.plot_contour(study, params=["dropout", "activation"])
-# Visualizing the Search Space
-optuna.visualization.plot_contour(study, params=["activation", "bptt_src"])
-# Visualizing the Search Space
-optuna.visualization.plot_contour(study, params=["bptt_src", "bptt_tgt"])
-# Visualizing the Search Space
-optuna.visualization.plot_contour(study, params=["bptt_tgt", "clip_param"])
-# Visualizing the Search Space
-optuna.visualization.plot_contour(study, params=["clip_param", "lr"])
-# Visualizing the Search Space
-optuna.visualization.plot_contour(study, params=["lr", "optimizer_name"])
-# Visualizing the Search Space
-optuna.visualization.plot_contour(study, params=["optimizer_name", "gamma"])
