@@ -405,7 +405,7 @@ def visualize_test_predictions(model, test_df, scaler, bptt_src, bptt_tgt, devic
                 src_len = src.size(1)
                 src_mask = torch.zeros(src_len, src_len, dtype=torch.bool, device=device)
                 output = model(src, src_mask=src_mask)
-                pred = output[:, -1, 1]  # shape: [1]
+                pred = output[:, -1]  # shape: [1]
                 predictions.append(pred.cpu().numpy())
                 binary_target = (tgt[:, -1, 0] > 0.5).float()
                 targets.append(binary_target.cpu().numpy())
