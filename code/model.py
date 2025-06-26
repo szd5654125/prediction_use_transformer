@@ -14,16 +14,6 @@ class SineActivation(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def Time2Vector(self, data):
-        """Add features to data:
-            1. keep the original features numbered by - in_features
-            2. add more periodic features numbered by - periodic_features
-            3. add more linear feature to end up with total of features numbered by - out_features
-        Args:
-            data: Tensor, shape [N, batch_size, in_features]
-
-        Returns:
-            data: Tensor, shape [N, batch_size, out_features]
-        """
         v_linear = torch.matmul(data, self.w0) + self.b0  # [B, T, D']
         v_sin = self.activation(torch.matmul(data, self.w) + self.b)  # [B, T, periodic_features]
         data = torch.cat([v_linear, v_sin, data], dim=2)  # [B, T, out_features]
@@ -54,24 +44,11 @@ class BTC_Transformer(nn.Module):
                                               periodic_features=periodic_features,
                                               out_features=hidden_dim,  # 当分类时为out_features
                                               dropout=dropout)
-
-        '''self.transformer = nn.Transformer(d_model=hidden_dim,  # 当分类时为out_features
-                                          nhead=nhead,
-                                          num_encoder_layers=num_encoder_layers,
-                                          num_decoder_layers=num_decoder_layers,
-                                          dim_feedforward=dim_feedforward,
-                                          dropout=dropout,
-                                          activation=activation)'''
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=hidden_dim, nhead=nhead, dim_feedforward=dim_feedforward,
             dropout=dropout, activation=activation, batch_first=True
         )
         self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_encoder_layers)
-
-        '''decoder_layer = nn.TransformerDecoderLayer(
-            d_model=hidden_dim, nhead=nhead, dim_feedforward=dim_feedforward,
-            dropout=dropout, activation=activation, batch_first=True
-        )'''
         # 用于回归任务
         # self.generator = nn.Linear(out_features, in_features)
         # 用于分类任务
@@ -80,23 +57,8 @@ class BTC_Transformer(nn.Module):
     def encode(self, src: Tensor, src_mask: Tensor = None, src_padding_mask: Tensor = None):
         return self.encoder(self.sine_activation(src), mask=src_mask, src_key_padding_mask=src_padding_mask)
 
-    '''def decode(self, tgt: Tensor, memory: Tensor, tgt_mask: Tensor = None, tgt_padding_mask: Tensor = None,
-               memory_key_padding_mask: Tensor = None):
-        return self.decoder(self.sine_activation(tgt), memory, tgt_mask=tgt_mask,
-                            tgt_key_padding_mask=tgt_padding_mask,
-                            memory_key_padding_mask=memory_key_padding_mask)'''
-
-    '''def forward(self, src, tgt, src_mask=None, tgt_mask=None, mem_mask=None,
-                src_padding_mask=None, tgt_padding_mask=None, memory_key_padding_mask=None):'''
     def forward(self, src, src_mask=None):
         src_emb = self.sine_activation(src)
-        # tgt_emb = self.sine_activation(tgt)
         memory = self.encoder(src_emb, mask=src_mask)
-        '''output = self.decoder(tgt_emb, memory,
-                              tgt_mask=tgt_mask,
-                              memory_mask=mem_mask,
-                              tgt_key_padding_mask=tgt_padding_mask,
-                              memory_key_padding_mask=memory_key_padding_mask)
-        return self.classifier(output[:, -1, :])'''
         return self.classifier(memory[:, -1, :])
 

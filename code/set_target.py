@@ -120,7 +120,7 @@ def detect_trend_numba(open_prices, close_prices, cost):
                         highest_price = current_close
 
                     if (highest_price - current_close) / highest_price > cost:
-                        trend_returns[i:highest_index + 1] = -1  # 记录趋势
+                        trend_returns[i:highest_index + 1] = 0  # 记录趋势
                         break
                 break
 
