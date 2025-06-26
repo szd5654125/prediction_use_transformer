@@ -167,9 +167,9 @@ def define_model(params_or_trial, device):
 
     enc_start, enc_end, enc_step = CONFIG["encoder_layer_range"]
     num_encoder_layers = get_param("encoder_layers", suggest_fn=lambda k: params_or_trial.suggest_int(k, enc_start, enc_end, step=enc_step))
-    in_features = data_min.shape[1]
+    in_features = data_min.shape[1] - 1
     hid_start_raw, hid_end, hid_step = CONFIG["hidden_dim_range"]
-    min_hidden_dim = compute_min_hidden_dim(in_features=data_min.shape[1], min_linear_features=1,
+    min_hidden_dim = compute_min_hidden_dim(in_features=in_features, min_linear_features=1,
                                             nhead_candidates=CONFIG["nhead_candidates"])
     hid_start = max(hid_start_raw, min_hidden_dim)
     hidden_dim = get_param("hidden_dim", suggest_fn=lambda k: params_or_trial.suggest_int(k, hid_start, hid_end,
@@ -213,8 +213,7 @@ def objective(trial):
     try:
         criterion = nn.CrossEntropyLoss()  # nn.L1Loss(): 绝对值损失 nn.MSELoss():平方损失 nn.CrossEntropyLoss:交叉熵损失
         best_val_loss = float('inf')
-        in_features = data_min.shape[1]
-        num_features = in_features
+        in_features = data_min.shape[1] - 1
         bptt_src_low, bptt_src_high, bptt_src_step = CONFIG["bptt_src_range"]
         bptt_src = trial.suggest_int("bptt_src", bptt_src_low, bptt_src_high, step=bptt_src_step)
         bptt_tgt_low, bptt_tgt_high, bptt_tgt_step = CONFIG["bptt_tgt_range"]
@@ -242,13 +241,12 @@ def objective(trial):
             scaler = pp.MinMaxScaler()
         else:
             raise ValueError(f'invalid scaler_name as {scaler_name}')
-        # create the relevant data
-        train = train_df.iloc[:, :num_features]
-        if val_df is not None:
-            val = val_df.iloc[:, :num_features]
-        else:
-            val = val_df
-        test = test_df.iloc[:, :num_features]
+        LABEL_COL = CONFIG["predicted_column"]
+        FEATURE_COLS = [c for c in train_df.columns if c != LABEL_COL]
+        # 拆分特征与标签
+        train, y_train = train_df[FEATURE_COLS], train_df[LABEL_COL].astype(np.int64)
+        val, y_val = val_df[FEATURE_COLS], val_df[LABEL_COL].astype(np.int64) if val_df is not None else (None, None)
+        test, y_test = test_df[FEATURE_COLS], test_df[LABEL_COL].astype(np.int64)
         train, val, test, scaler = normalize_data(train, val, test, scaler)
         train_data = betchify(train, CONFIG['train_batch_size'], device).float()
         if val is not None:
@@ -265,21 +263,26 @@ def objective(trial):
                 start_point = 0
             num_batches = (len(train_data) - start_point) // bptt_src
             log_interval = max(1, round(num_batches // 3 / 10) * 10)
+            DEBUG_INTERVAL = max(1, num_batches // 2)
+            y_tensor = torch.tensor(y_train.values, dtype=torch.int64, device=device)
             # look-ahead mask for the target
             for batch, i in enumerate(range(start_point, train_data.size(1) - 1, bptt_src)):
                 # forward
                 source, targets = get_batch(train_data, i, bptt_src, bptt_tgt, CONFIG['overlap'])
                 src_len = source.size(1)  # 时间维
-                tgt_len = targets.size(1)
                 src_mask = torch.zeros(src_len, src_len, dtype=torch.bool, device=device)
-                tgt_mask = torch.triu(torch.ones(tgt_len, tgt_len, dtype=torch.bool, device=device), 1)
-                # output = model(source, targets, src_mask, tgt_mask)
+                label_idx = i + bptt_src + bptt_tgt - 1  # 对齐到未来窗口最后时刻
+                labels = y_tensor[label_idx: label_idx + source.size(0)]  # 按 batch 尺寸取
                 output = model(source, src_mask)
                 # 用于分类任务
-                target_index = train_df.columns.get_loc(CONFIG["predicted_column"])
-                targets = (targets > 0.5).long()  # 先转换为0和1构成的数列
-                targets = targets[:, -1, target_index]
-                loss = criterion(output, targets)
+                loss = criterion(output, labels)
+
+                if batch % DEBUG_INTERVAL == 0:
+                    with torch.no_grad():
+                        prob = torch.softmax(output, dim=1)[:, 1]  # 概率（上涨）
+                        pred = torch.argmax(output, dim=1)  # 0 / 1 预测
+                        print(f"[E{epoch:02d} B{batch:04d}] pred {pred[:8].cpu().tolist()} "
+                              f"prob {prob[:8].cpu().tolist()}  label {labels[:8].cpu().tolist()}")
                 # backward
                 optimizer.zero_grad()
                 loss.backward()
@@ -342,19 +345,20 @@ def retrain_model(best_params, device="cuda:0", save_path="best_model_final.pt")
         scaler = pp.StandardScaler()
     else:
         scaler = pp.MinMaxScaler()
-
-    train = train_df.iloc[:, :in_features]
-    val = val_df.iloc[:, :in_features] if val_df is not None else None
-    test = test_df.iloc[:, :in_features]
+    LABEL_COL = CONFIG["predicted_column"]
+    FEATURE_COLS = [c for c in train_df.columns if c != LABEL_COL]
+    # 拆分特征与标签
+    train, y_train = train_df[FEATURE_COLS], train_df[LABEL_COL].astype(np.int64)
+    val, y_val = val_df[FEATURE_COLS], val_df[LABEL_COL].astype(np.int64) if val_df is not None else (None, None)
+    test, y_test = test_df[FEATURE_COLS], test_df[LABEL_COL].astype(np.int64)
 
     train, val, test, scaler = normalize_data(train, val, test, scaler)
-
     train_data = betchify(train, 32, torch.device(device)).float()
     val_data = betchify(val, 32, torch.device(device)).float() if val is not None else None
 
     best_val_loss = float('inf')
     best_model = None
-
+    y_tensor = torch.tensor(y_train.values, dtype=torch.int64, device=device)
     for epoch in range(1, CONFIG['epochs'] + 1):
         model.train()
         total_loss = 0.
@@ -362,20 +366,15 @@ def retrain_model(best_params, device="cuda:0", save_path="best_model_final.pt")
         for batch, i in enumerate(range(start_point, train_data.size(1) - 1, bptt_src)):
             source, targets = get_batch(train_data, i, bptt_src, bptt_tgt, CONFIG['overlap'])
             src_len = source.size(1)  # 时间维
-            tgt_len = targets.size(1)
             src_mask = torch.zeros(src_len, src_len, dtype=torch.bool, device=device)
-            tgt_mask = torch.triu(torch.ones(tgt_len, tgt_len, dtype=torch.bool, device=device), 1)
-            # output = model(source, targets, src_mask, tgt_mask)
+            label_idx = i + bptt_src + bptt_tgt - 1  # 对齐到未来窗口最后时刻
+            labels = y_tensor[label_idx: label_idx + source.size(0)]  # 按 batch 尺寸取
             output = model(source, src_mask)
-            target_index = train_df.columns.get_loc(CONFIG["predicted_column"])
-            targets = (targets > 0.5).long()
-            targets = targets[:, -1, target_index]
-            loss = criterion(output, targets)
+            loss = criterion(output, labels)
             optimizer.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), clip_param)
             optimizer.step()
-
             total_loss += loss.item()
         scheduler.step()
         if val_data is not None:
@@ -403,13 +402,10 @@ def visualize_test_predictions(model, test_df, scaler, bptt_src, bptt_tgt, devic
     test_batches = betchify(test, batch_size=32, device=torch.device(device)).float()
     predictions = []
     targets = []
-    # src_mask = torch.zeros((bptt_src, bptt_src), dtype=torch.bool).to(device)
-    # tgt_mask = torch.triu(torch.ones((bptt_tgt, bptt_tgt), dtype=torch.bool), diagonal=1).to(device)
     sequence_length = test_batches.shape[1]
     for batch_idx in range(test_batches.shape[0]):
         for i in range(0, sequence_length - bptt_src - bptt_tgt, bptt_src):
             src, tgt = get_batch(test_batches, i, bptt_src, bptt_tgt, CONFIG['overlap'])
-            # [time, feature] -> 加 batch 维度，变成 [1, time, feature]
             src = src.to(device)
             tgt = tgt.to(device)
 
@@ -442,7 +438,7 @@ def visualize_test_predictions(model, test_df, scaler, bptt_src, bptt_tgt, devic
 sampler = optuna.samplers.TPESampler()
 # 三块gpu最多运行40个任务，cpu最多128个，两个设备当前任务比值是1:2
 study = optuna.create_study(study_name="BTC_Transformer", direction="minimize", sampler=sampler)
-study.optimize(objective, n_trials=2000, n_jobs=CONFIG["total_jobs"])  # 并行数乘二是因为一个gpu可以运行多个任务
+study.optimize(objective, n_trials=1000, n_jobs=CONFIG["total_jobs"])  # 并行数乘二是因为一个gpu可以运行多个任务
 # study.optimize(objective, n_trials=200)  # 先尝试一个任务
 # 打印获得的最佳参数结果
 pruned_trials = [t for t in study.trials if t.state == optuna.trial.TrialState.PRUNED]
