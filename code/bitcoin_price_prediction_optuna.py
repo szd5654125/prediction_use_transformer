@@ -276,7 +276,6 @@ def objective(trial):
                 output = model(source, src_mask)
                 # 用于分类任务
                 loss = criterion(output, labels)
-
                 if batch % DEBUG_INTERVAL == 0:
                     with torch.no_grad():
                         prob = torch.softmax(output, dim=1)[:, 1]  # 概率（上涨）
@@ -395,28 +394,28 @@ def visualize_test_predictions(model, test_df, scaler, bptt_src, bptt_tgt, devic
     model.eval()
     model.to(device)
     # 只保留输入特征
-    train = train_df.iloc[:, :in_features]
-    val = val_df.iloc[:, :in_features] if val_df is not None else None
-    test = test_df.iloc[:, :in_features]
+    LABEL_COL = CONFIG["predicted_column"]
+    FEATURE_COLS = [c for c in train_df.columns if c != LABEL_COL]
+    train, y_train = train_df[FEATURE_COLS], train_df[LABEL_COL].astype(np.int64)
+    val, y_val = val_df[FEATURE_COLS], val_df[LABEL_COL].astype(np.int64) if val_df is not None else (None, None)
+    test, y_test = test_df[FEATURE_COLS], test_df[LABEL_COL].astype(np.int64)
     train, val, test, scaler = normalize_data(train, val, test, scaler)
-    test_batches = betchify(test, batch_size=32, device=torch.device(device)).float()
+    test_data = betchify(test, batch_size=32, device=torch.device(device)).float()
     predictions = []
     targets = []
-    sequence_length = test_batches.shape[1]
-    for batch_idx in range(test_batches.shape[0]):
-        for i in range(0, sequence_length - bptt_src - bptt_tgt, bptt_src):
-            src, tgt = get_batch(test_batches, i, bptt_src, bptt_tgt, CONFIG['overlap'])
-            src = src.to(device)
-            tgt = tgt.to(device)
-
-            with torch.no_grad():
-                src_len = src.size(1)
-                src_mask = torch.zeros(src_len, src_len, dtype=torch.bool, device=device)
-                output = model(src, src_mask=src_mask)
-                pred = output[:, -1]  # shape: [1]
-                predictions.append(pred.cpu().numpy())
-                binary_target = (tgt[:, -1, 0] > 0.5).float()
-                targets.append(binary_target.cpu().numpy())
+    sequence_length = test_data.size(1)
+    y_tensor = torch.tensor(y_test.values, dtype=torch.int64, device=device)
+    for i in range(0, sequence_length  - (bptt_src + bptt_tgt) + 1, bptt_src):
+        source, _ = get_batch(test_data, i, bptt_src, bptt_tgt, CONFIG['overlap'])
+        src_len = source.size(1)
+        src_mask = torch.zeros(src_len, src_len, dtype=torch.bool, device=device)
+        label_idx = i + bptt_src + bptt_tgt - 1
+        labels = y_tensor[label_idx: label_idx + source.size(0)]
+        with torch.no_grad():
+            output = model(source, src_mask=src_mask)
+            prob   = torch.softmax(output, dim=1)[:, 1]
+            predictions.append(prob.cpu().numpy())
+            targets.append(labels.cpu().numpy())
     predictions = np.concatenate(predictions)
     targets = np.concatenate(targets)
     # 可视化
@@ -438,7 +437,7 @@ def visualize_test_predictions(model, test_df, scaler, bptt_src, bptt_tgt, devic
 sampler = optuna.samplers.TPESampler()
 # 三块gpu最多运行40个任务，cpu最多128个，两个设备当前任务比值是1:2
 study = optuna.create_study(study_name="BTC_Transformer", direction="minimize", sampler=sampler)
-study.optimize(objective, n_trials=1000, n_jobs=CONFIG["total_jobs"])  # 并行数乘二是因为一个gpu可以运行多个任务
+study.optimize(objective, n_trials=8, n_jobs=CONFIG["total_jobs"])  # 并行数乘二是因为一个gpu可以运行多个任务
 # study.optimize(objective, n_trials=200)  # 先尝试一个任务
 # 打印获得的最佳参数结果
 pruned_trials = [t for t in study.trials if t.state == optuna.trial.TrialState.PRUNED]
@@ -469,7 +468,9 @@ if best_params["scaler_name"] == 'standard':
     scaler = pp.StandardScaler()
 else:
     scaler = pp.MinMaxScaler()
-train = train_df.iloc[:, :in_features]
+LABEL_COL = CONFIG["predicted_column"]
+FEATURE_COLS = [c for c in train_df.columns if c != LABEL_COL]
+train, y_train = train_df[FEATURE_COLS], train_df[LABEL_COL].astype(np.int64)
 scaler = scaler.fit(train)
 
 visualize_test_predictions(model=best_model, test_df=test_df, scaler=scaler, bptt_src=best_params["bptt_src"],
