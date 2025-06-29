@@ -21,7 +21,7 @@ from set_target import detect_trend_optimized
 
 CONFIG = {
     # 数据路径与特征
-    "data_file": "input/btcusdt/BTCUSDT-3m-2024-01_to_03.csv",
+    "data_file": "input/btcusdt/BTCUSDT-3m-2022-01_to_09.csv",
     "extra_features": [
         'SMA', 'TRIX', 'VWAP', 'MACD', 'EV_MACD', 'MOM', 'RSI', 'IFT_RSI', 'TR', 'ATR', 'BBWIDTH', 'DMI',
         'ADX', 'STOCHRSI', 'MI', 'CHAIKIN', 'VZO', 'PZO', 'EFI', 'EBBP', 'BASP', 'BASPN', 'WTO', 'SQZMI', 'VFI', 'STC'
@@ -34,26 +34,26 @@ CONFIG = {
 
     # 模型训练参数
     "epochs": 50,
-    "train_batch_size": 32,
+    "train_batch_size": 64,  # 原先为32，尝试64
     "eval_batch_size": 32,
     "step_size": 1,
     "overlap": 1,
     "random_start": True,
 
     # 超参数搜索空间
-    "lr_range": (1e-4, 1e-1),
+    "lr_range": (1e-4, 1e-3),  # (1e-4, 1e-1)
     "gamma_range": (0.7, 0.97, 0.05),
     "clip_range": (0.25, 1.0, 0.25),
-    "bptt_src_range": (10, 100, 10),
-    "bptt_tgt_range": (6, 28, 2),
-    "optimizers": ["SGD", "Adam", "AdamW"],
+    "bptt_src_range": (60, 150, 10),  # (10, 100, 10)
+    "bptt_tgt_range": (16, 28, 2),  # (6, 28, 2)
+    "optimizers": ["SGD"],  # ["SGD", "Adam", "AdamW"]
     "scalers": ["standard", "minmax"],
-    "activations": ["relu", "gelu"],
+    "activations": ["relu"],  # ["relu", "gelu"]
     "nhead_candidates": [2, 4, 8, 12, 16],
     "encoder_layer_range": (2, 8, 2),
-    "hidden_dim_range": (48, 208, 16),
-    "feedforward_dim_range": (128, 512, 128),
-    "dropout_range": (0.0, 0.5, 0.1),
+    "hidden_dim_range": (112, 288, 16),  # (48, 208, 16)
+    "feedforward_dim_range": (384, 768, 128),
+    "dropout_range": (0.2, 0.5, 0.1),  # (0.0, 0.5, 0.1)
 
     # 显卡/CPU 并发控制
     "num_gpus": torch.cuda.device_count(),
@@ -213,7 +213,6 @@ def objective(trial):
     try:
         criterion = nn.CrossEntropyLoss()  # nn.L1Loss(): 绝对值损失 nn.MSELoss():平方损失 nn.CrossEntropyLoss:交叉熵损失
         best_val_loss = float('inf')
-        in_features = data_min.shape[1] - 1
         bptt_src_low, bptt_src_high, bptt_src_step = CONFIG["bptt_src_range"]
         bptt_src = trial.suggest_int("bptt_src", bptt_src_low, bptt_src_high, step=bptt_src_step)
         bptt_tgt_low, bptt_tgt_high, bptt_tgt_step = CONFIG["bptt_tgt_range"]
