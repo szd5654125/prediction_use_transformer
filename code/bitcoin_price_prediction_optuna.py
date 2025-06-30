@@ -279,8 +279,8 @@ def objective(trial):
                     with torch.no_grad():
                         prob = torch.softmax(output, dim=1)[:, 1]  # 概率（上涨）
                         pred = torch.argmax(output, dim=1)  # 0 / 1 预测
-                        print(f"[E{epoch:02d} B{batch:04d}] pred {pred[:8].cpu().tolist()} "
-                              f"prob {prob[:8].cpu().tolist()}  label {labels[:8].cpu().tolist()}")
+                        '''print(f"[E{epoch:02d} B{batch:04d}] pred {pred[:8].cpu().tolist()} "
+                              f"prob {prob[:8].cpu().tolist()}  label {labels[:8].cpu().tolist()}")'''
                 # backward
                 optimizer.zero_grad()
                 loss.backward()
@@ -312,8 +312,8 @@ def objective(trial):
         if device.type == "cuda":
             allocated = torch.cuda.memory_allocated(device) / (1024 ** 2)
             reserved = torch.cuda.memory_reserved(device) / (1024 ** 2)
-            print(
-                f"[Trial {trial.number}] GPU {device.index} - Allocated: {allocated:.2f} MB | Reserved: {reserved:.2f} MB")
+            print(f"[Trial {trial.number}] GPU {device.index} - Allocated: {allocated:.2f} MB | "
+                  f"Reserved: {reserved:.2f} MB")
 
         return val_loss
     except optuna.exceptions.TrialPruned:
@@ -436,7 +436,7 @@ def visualize_test_predictions(model, test_df, scaler, bptt_src, bptt_tgt, devic
 sampler = optuna.samplers.TPESampler()
 # 三块gpu最多运行40个任务，cpu最多128个，两个设备当前任务比值是1:2
 study = optuna.create_study(study_name="BTC_Transformer", direction="minimize", sampler=sampler)
-study.optimize(objective, n_trials=8, n_jobs=CONFIG["total_jobs"])  # 并行数乘二是因为一个gpu可以运行多个任务
+study.optimize(objective, n_trials=1000, n_jobs=CONFIG["total_jobs"])  # 并行数乘二是因为一个gpu可以运行多个任务
 # study.optimize(objective, n_trials=200)  # 先尝试一个任务
 # 打印获得的最佳参数结果
 pruned_trials = [t for t in study.trials if t.state == optuna.trial.TrialState.PRUNED]
