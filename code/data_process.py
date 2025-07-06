@@ -1,3 +1,4 @@
+import pandas as pd
 import torch
 import sklearn.preprocessing as pp
 from finta import TA
@@ -207,3 +208,12 @@ def add_finta_feature_parallel(data, feature_names, both_columns_features, num_p
 
     print(f"\n[INFO] 全部指标计算完成，共添加 {len(results)} 个指标。\n")
     return data
+
+def pct_from_open(df: pd.DataFrame, cols=['high', 'low', 'close'], open_col='open') -> pd.DataFrame:
+    """
+    将指定列替换为 (col - open) / open。
+    ⚠️ 结果就地覆盖；若需保留原值，请先 df.copy()。
+    """
+    df[cols] = (df[list(cols)].subtract(df[open_col], axis=0)
+                                    .div(df[open_col], axis=0))
+    return df

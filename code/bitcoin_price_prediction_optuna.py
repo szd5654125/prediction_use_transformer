@@ -13,7 +13,8 @@ import multiprocessing
 import threading
 import os
 
-from data_process import train_validation_test_split, normalize_data, betchify, get_batch, add_finta_feature_parallel
+from data_process import (train_validation_test_split, normalize_data, betchify, get_batch, add_finta_feature_parallel,
+                          pct_from_open)
 from model import BTC_Transformer
 from evaluation import evaluate
 from set_target import detect_trend_optimized
@@ -34,7 +35,7 @@ CONFIG = {
 
     # 模型训练参数
     "epochs": 50,
-    "train_batch_size": 64,  # 原先为32，尝试64
+    "train_batch_size": 32,  # 原先为32，尝试64
     "eval_batch_size": 32,
     "step_size": 1,
     "overlap": 1,
@@ -42,18 +43,18 @@ CONFIG = {
 
     # 超参数搜索空间
     "lr_range": (1e-4, 1e-3),  # (1e-4, 1e-1)
-    "gamma_range": (0.7, 0.97, 0.05),
-    "clip_range": (0.25, 1.0, 0.25),
+    "gamma_range": (0.5, 0.97, 0.05),  # (0.7, 0.97, 0.05)
+    "clip_range": (0.1, 0.5, 0.1),  # (0.25, 1.0, 0.25)
     "bptt_src_range": (60, 150, 10),  # (10, 100, 10)
     "bptt_tgt_range": (16, 28, 2),  # (6, 28, 2)
     "optimizers": ["SGD"],  # ["SGD", "Adam", "AdamW"]
     "scalers": ["standard", "minmax"],
     "activations": ["relu"],  # ["relu", "gelu"]
     "nhead_candidates": [2, 4, 8, 12, 16],
-    "encoder_layer_range": (2, 8, 2),
+    "encoder_layer_range": (4, 12, 2),  # (2, 8, 2)
     "hidden_dim_range": (112, 288, 16),  # (48, 208, 16)
     "feedforward_dim_range": (384, 768, 128),
-    "dropout_range": (0.2, 0.5, 0.1),  # (0.0, 0.5, 0.1)
+    "dropout_range": (0, 0.3, 0.1),  # (0.0, 0.5, 0.1)
 
     # 显卡/CPU 并发控制
     "num_gpus": torch.cuda.device_count(),
@@ -66,8 +67,8 @@ CONFIG = {
     "plot_data_process": True,
     "font": {'family': 'Arial', 'weight': 'normal', 'size': 16},
 }
-CONFIG["max_cpu_jobs"] = CONFIG["num_cpus"]/16 - 1  # 另外 2/3暂时给回测任务
-CONFIG["max_gpu_jobs"] = CONFIG["num_gpus"] * 4  # 每个 GPU 最多运行 10 个任务 增加模型深度以后花费内存大大升高
+CONFIG["max_cpu_jobs"] = CONFIG["num_cpus"]/8 - 1  # 另外 2/3暂时给回测任务
+CONFIG["max_gpu_jobs"] = CONFIG["num_gpus"] * 1  # 每个 GPU 最多运行 10 个任务 增加模型深度以后花费内存大大升高
 CONFIG["total_jobs"] = CONFIG["max_cpu_jobs"] + CONFIG["max_gpu_jobs"]
 
 cpu_lock = threading.Lock()  # 线程锁，防止 CPU 任务计数竞争
@@ -92,7 +93,9 @@ data_min = data.copy()
 data_min = detect_trend_optimized(data_min)
 # 使用finta添加特征
 data_min = add_finta_feature_parallel(data_min, CONFIG["extra_features"], CONFIG["both_columns_features"])
-
+# 先添加完特征以后再处理hlc
+data_min = pct_from_open(data_min)
+print(data_min.head(5))
 # 删除所有包含NA的行
 data_min = data_min.dropna().reset_index(drop=True)
 if plot_data_process:
@@ -399,13 +402,16 @@ def visualize_test_predictions(model, test_df, scaler, bptt_src, bptt_tgt, devic
     val, y_val = val_df[FEATURE_COLS], val_df[LABEL_COL].astype(np.int64) if val_df is not None else (None, None)
     test, y_test = test_df[FEATURE_COLS], test_df[LABEL_COL].astype(np.int64)
     train, val, test, scaler = normalize_data(train, val, test, scaler)
-    test_data = betchify(test, batch_size=32, device=torch.device(device)).float()
+    # test_data = betchify(test, batch_size=32, device=torch.device(device)).float()
+    test_data = betchify(test, batch_size=1, device=torch.device(device)).float()
     predictions = []
     targets = []
     sequence_length = test_data.size(1)
     y_tensor = torch.tensor(y_test.values, dtype=torch.int64, device=device)
-    for i in range(0, sequence_length  - (bptt_src + bptt_tgt) + 1, bptt_src):
-        source, _ = get_batch(test_data, i, bptt_src, bptt_tgt, CONFIG['overlap'])
+    # for i in range(0, sequence_length  - (bptt_src + bptt_tgt) + 1, bptt_src):
+    for i in range(0, sequence_length - (bptt_src + bptt_tgt) + 1, 1):
+        # source, _ = get_batch(test_data, i, bptt_src, bptt_tgt, CONFIG['overlap'])
+        source, _ = get_batch(test_data, i, bptt_src, bptt_tgt, 0)
         src_len = source.size(1)
         src_mask = torch.zeros(src_len, src_len, dtype=torch.bool, device=device)
         label_idx = i + bptt_src + bptt_tgt - 1
@@ -424,6 +430,7 @@ def visualize_test_predictions(model, test_df, scaler, bptt_src, bptt_tgt, devic
     plt.plot(targets, label="Actual Trend", color='red', alpha=0.6)
     plt.title("Test Set Predictions vs Ground Truth")
     plt.xlabel("Batch Index")
+    plt.xlabel("Time Index")
     plt.ylabel("Probability / Binary Label")
     plt.legend()
     plt.grid(True)

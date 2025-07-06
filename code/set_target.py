@@ -148,7 +148,7 @@ def detect_trend_numba(open_prices, close_prices, cost):
     return trend_returns
 
 
-def detect_trend_optimized(df, cost=0.00072):
+def detect_trend_optimized(df, cost=0.05):  # cost=0.00072
     open_prices = df['open'].values
     close_prices = df['close'].values
 
