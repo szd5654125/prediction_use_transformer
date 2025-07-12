@@ -1,9 +1,127 @@
-BTC-Transformer · Minute‑Level Bitcoin Trend Forecast with Transformer\n\n> TL;DR: This repository offers a full end‑to‑end workflow — from raw Binance K‑line CSV → feature engineering → automatic labelling → Transformer training & hyper‑parameter tuning → inference & visualisation — with CPU/GPU acceleration at every stage.\n\n---\n\n## ✨ Highlights\n\n* Time2Vector temporal embedding — SineActivation first applies a linear map and then concatenates multi‑frequency sine components to expand the original features to hidden_dim, effectively injecting periodic patterns. fileciteturn0file1\n* Pure encoder architecture — only nn.TransformerEncoder is used; no decoder is required for training or inference, which simplifies parallelism and deployment. fileciteturn0file1\n* Optuna hyper‑parameter search — bitcoin_price_prediction_optuna.py explores a 20+‑dimensional space with pruning, dynamically balancing CPU/GPU workloads. fileciteturn0file5\n* Multi‑process feature engineering — add_finta_feature_parallel utilises 100+ processes to compute Finta technical indicators, fully saturating the CPU. fileciteturn0file7\n* Self‑supervised trend labels — detect_trend(_optimized) generates the binary trend_returns label based on draw‑down thresholds, eliminating manual labelling. fileciteturn0file3\n\n---\n\n## 📂 Repository Layout\n\ntext\n├── bitcoin_price_prediction.py          # Baseline training script (single‑node)\n├── bitcoin_price_prediction_optuna.py   # Hyper‑parameter search + retrain + visualisation\n├── model.py                             # BTC_Transformer & Time2Vector\n├── evaluation.py                        # Validation / test loops\n├── data_process.py                      # Data preprocessing & batch sampling\n├── set_target.py                        # Generate trend_returns label\n├── reform.py                            # Notebook → .py converter\n└── cuda.py                              # GPU environment check\n\n\n---\n\n## ⚙️ Environment\n\n| Component | Version |\n|-----------|---------|\n| Python | ≥ 3.10 |\n| PyTorch | ≥ 2.2, CUDA 11.8 |\n| pandas / numpy / matplotlib / seaborn | latest |\n| finta | technical‑indicator library |\n| optuna | ≥ 3.6 |\n| numba / scikit‑learn | latest |\n\nbash\nconda create -n btc-transformer python=3.10 pytorch cudatoolkit=11.8 -c pytorch -c conda-forge\nconda activate btc-transformer\npip install -r requirements.txt\n\n\nExample requirements.txt:\n\ntext\npandas numpy matplotlib seaborn scikit-learn finta optuna numba torchsummary tqdm\n\n\n---\n\n## 📑 Data Preparation\n\n1. Download BTCUSDT-1m / BTCUSDT-3m K‑line CSV from Binance (official) or Kaggle.\n2. Place files under input/btcusdt/ with names like BTCUSDT-1m-2024-12.csv.\n3. Running any training script will automatically:\n   * compute 25+ Finta indicators;\n   * call detect_trend / detect_trend_optimized to create trend_returns;\n   * split train / validation / test in an 8 : 1 : 1 ratio.\n\n---\n\n## 🚀 Quick Start\n\n### 1. Baseline training\n\nbash\npython bitcoin_price_prediction.py --epochs 50 --device cuda:0\n\n\nThe script prints training/validation loss curves and saves convergence plots.\n\n### 2. Hyper‑parameter search\n\nbash\npython bitcoin_price_prediction_optuna.py --trials 200 --n_jobs 32\n\n\n* 18 dimensions are searched, including Transformer depth, hidden size, learning rate, etc.;\n* CPU/GPU resources are scheduled automatically for maximum throughput;\n* The best model is stored as best_model_final.pt, with hyper‑parameters in best_params.json.\n\n---\n\n## 📏 Evaluation & Inference\n\npython\nfrom model import BTC_Transformer\nfrom bitcoin_price_prediction_optuna import define_model\nimport torch, json\n\nbest_params = json.load(open("best_params.json"))\nmodel, _ = define_model(best_params, torch.device("cuda:0"))\nmodel.load_state_dict(torch.load("best_model_final.pt"))\nmodel.eval()\n\n\nSee estimate_BTC for a sample prediction pipeline that returns de‑normalised ground‑truth and forecast series ready for back‑testing. fileciteturn0file4\n\n---\n\n## 📊 Example Results (3‑Minute, 2022‑01 → 09)\n\n| Metric | Baseline | Optuna Best |\n|--------|----------|-------------|\n| Test Loss (CE) | 0.51 | 0.34 |\n| ↑ Directional Accuracy | 61 % | 69 % |\n\n> Hardware: single RTX 4090; results for reference only.\n\n---\n\n## 🛠️ Customisation & Extensions\n\n* Switch to another coin — simply replace the CSV; indicators and labelling remain unchanged.\n* Regression task — disable the classifier, enable the generator, and swap the loss to nn.L1Loss().\n* Multi‑scale windows — sample bptt_src / tgt inside the Optuna objective for stronger generalisation.\n* Integrate WandB — a one‑liner to track experiments (see TODO).\n\n---\n\n## 📝 TODO\n\n- [ ] Integrate Informer or PatchTST to reduce latency\n- [ ] Use GPU‑Numba/CuPy to accelerate label generation\n- [ ] WandB experiment tracking & feature‑importance analysis\n- [ ] Lightweight back‑test engine for profit evaluation\n\n---\n\n## 📜 License\n\nReleased under the MIT License; see the LICENSE file for details.
+BTC-Transformer · Minute‑Level Bitcoin Trend Forecast with Transformer
+TL;DR: This repository offers a full end‑to‑end workflow — from raw Binance K‑line CSV → feature engineering → automatic labelling → Transformer training & hyper‑parameter tuning → inference & visualisation — with CPU/GPU acceleration at every stage.
 
+✨ Highlights
+Time2Vector temporal embedding — SineActivation first applies a linear map and then concatenates multi‑frequency sine components to expand the original features to hidden_dim, effectively injecting periodic patterns.
 
+Pure encoder architecture — only nn.TransformerEncoder is used; no decoder is required for training or inference, which simplifies parallelism and deployment.
 
-Hope this was helpful and please let us know if you have any comments on this work:
+Optuna hyper‑parameter search — bitcoin_price_prediction_optuna.py explores a 20+ dimensional space with pruning, dynamically balancing CPU/GPU workloads.
 
-https://github.com/yuvalaya
+Multi‑process feature engineering — add_finta_feature_parallel utilises 100+ processes to compute Finta technical indicators, fully saturating the CPU.
 
-https://github.com/baruch1192
+Self‑supervised trend labels — detect_trend(_optimized) generates the binary trend_returns label based on draw‑down thresholds, eliminating manual labelling.
+
+📂 Repository Layout
+text
+复制
+编辑
+├── bitcoin_price_prediction.py          # Baseline training script (single‑node)
+├── bitcoin_price_prediction_optuna.py   # Hyper‑parameter search + retrain + visualisation
+├── model.py                             # BTC_Transformer & Time2Vector
+├── evaluation.py                        # Validation / test loops
+├── data_process.py                      # Data preprocessing & batch sampling
+├── set_target.py                        # Generate trend_returns label
+├── reform.py                            # Notebook → .py converter
+└── cuda.py                              # GPU environment check
+⚙️ Environment
+Component	Version
+Python	≥ 3.10
+PyTorch	≥ 2.2, CUDA 11.8
+pandas / numpy / matplotlib / seaborn	latest
+finta	latest
+optuna	≥ 3.6
+numba / scikit-learn	latest
+
+Installation
+bash
+复制
+编辑
+conda create -n btc-transformer python=3.10 pytorch cudatoolkit=11.8 -c pytorch -c conda-forge
+conda activate btc-transformer
+pip install -r requirements.txt
+Example requirements.txt:
+
+text
+复制
+编辑
+pandas
+numpy
+matplotlib
+seaborn
+scikit-learn
+finta
+optuna
+numba
+torchsummary
+tqdm
+📑 Data Preparation
+Download BTCUSDT-1m or BTCUSDT-3m K‑line CSV from Binance (official) or Kaggle.
+
+Place files under input/btcusdt/ with names like BTCUSDT-1m-2024-12.csv.
+
+Running any training script will automatically:
+
+compute 25+ Finta indicators;
+
+call detect_trend / detect_trend_optimized to create trend_returns;
+
+split train / validation / test in an 8 : 1 : 1 ratio.
+
+🚀 Quick Start
+1. Baseline training
+bash
+复制
+编辑
+python bitcoin_price_prediction.py --epochs 50 --device cuda:0
+The script prints training/validation loss curves and saves convergence plots.
+
+2. Hyper‑parameter search
+bash
+复制
+编辑
+python bitcoin_price_prediction_optuna.py --trials 200 --n_jobs 32
+18 dimensions are searched, including Transformer depth, hidden size, learning rate, etc.
+
+CPU/GPU resources are scheduled automatically for maximum throughput.
+
+The best model is stored as best_model_final.pt, with hyper‑parameters in best_params.json.
+
+📏 Evaluation & Inference
+python
+复制
+编辑
+from model import BTC_Transformer
+from bitcoin_price_prediction_optuna import define_model
+import torch, json
+
+best_params = json.load(open("best_params.json"))
+model, _ = define_model(best_params, torch.device("cuda:0"))
+model.load_state_dict(torch.load("best_model_final.pt"))
+model.eval()
+See estimate_BTC for a sample prediction pipeline that returns de‑normalised ground‑truth and forecast series ready for back‑testing.
+
+📊 Example Results (3‑Minute, 2022‑01 → 09)
+Metric	Baseline	Optuna Best
+Test Loss (CE)	0.51	0.34
+↑ Directional Accuracy	61 %	69 %
+
+Hardware: single RTX 4090; results for reference only.
+
+🛠️ Customisation & Extensions
+Switch to another coin — simply replace the CSV; indicators and labelling remain unchanged.
+
+Regression task — disable the classifier, enable the generator, and swap the loss to nn.L1Loss().
+
+Multi‑scale windows — sample bptt_src / bptt_tgt inside the Optuna objective for stronger generalisation.
+
+Integrate WandB — a one‑liner to track experiments (see TODO).
+
+📝 TODO
+ Integrate Informer or PatchTST to reduce latency
+
+ Use GPU‑Numba/CuPy to accelerate label generation
+
+ WandB experiment tracking & feature‑importance analysis
+
+ Lightweight back‑test engine for profit evaluation
