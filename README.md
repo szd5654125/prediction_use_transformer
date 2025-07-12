@@ -13,9 +13,6 @@ Multi‑process feature engineering — add_finta_feature_parallel utilises 100+
 Self‑supervised trend labels — detect_trend(_optimized) generates the binary trend_returns label based on draw‑down thresholds, eliminating manual labelling.
 
 📂 Repository Layout
-text
-复制
-编辑
 ├── bitcoin_price_prediction.py          # Baseline training script (single‑node)
 ├── bitcoin_price_prediction_optuna.py   # Hyper‑parameter search + retrain + visualisation
 ├── model.py                             # BTC_Transformer & Time2Vector
@@ -34,17 +31,11 @@ optuna	≥ 3.6
 numba / scikit-learn	latest
 
 Installation
-bash
-复制
-编辑
 conda create -n btc-transformer python=3.10 pytorch cudatoolkit=11.8 -c pytorch -c conda-forge
 conda activate btc-transformer
 pip install -r requirements.txt
 Example requirements.txt:
 
-text
-复制
-编辑
 pandas
 numpy
 matplotlib
@@ -70,16 +61,10 @@ split train / validation / test in an 8 : 1 : 1 ratio.
 
 🚀 Quick Start
 1. Baseline training
-bash
-复制
-编辑
 python bitcoin_price_prediction.py --epochs 50 --device cuda:0
 The script prints training/validation loss curves and saves convergence plots.
 
 2. Hyper‑parameter search
-bash
-复制
-编辑
 python bitcoin_price_prediction_optuna.py --trials 200 --n_jobs 32
 18 dimensions are searched, including Transformer depth, hidden size, learning rate, etc.
 
@@ -88,9 +73,6 @@ CPU/GPU resources are scheduled automatically for maximum throughput.
 The best model is stored as best_model_final.pt, with hyper‑parameters in best_params.json.
 
 📏 Evaluation & Inference
-python
-复制
-编辑
 from model import BTC_Transformer
 from bitcoin_price_prediction_optuna import define_model
 import torch, json
